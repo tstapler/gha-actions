@@ -234,17 +234,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Container really lacks ps and free
+      - name: Report whether the container image ships ps and free
         run: |
-          if command -v ps >/dev/null 2>&1 || command -v free >/dev/null 2>&1; then
-            echo "::warning title=image changed::ubuntu:24.04 now has ps or free; this job no longer proves the /proc fallback"
-          fi
-          command -v ps || echo "no ps"
-          command -v free || echo "no free"
+          command -v ps || echo "ps absent"
+          command -v free || echo "free absent"
 
       - uses: ./mem-sampler
 
       - name: Sampler works through /proc
+        env:
+          MEM_SAMPLER_FORCE_PROC: '1'  # ubuntu:24.04 ships procps on runners, so force the fallback path
         run: |
           mem-sampler --out out/metrics.json --label container --interval 1 -- sleep 3 | tee out.log
           grep -q '^\[mem\] used=' out.log
