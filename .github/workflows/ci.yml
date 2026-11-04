@@ -35,7 +35,7 @@ jobs:
           "$(go env GOPATH)/bin/actionlint" -color
 
       - name: zizmor
-        run: uvx 'zizmor==1.25.2' --no-progress .
+        run: pipx run 'zizmor==1.25.2' --no-progress .
 
       - name: Unit tests
         run: bash test/run.sh
