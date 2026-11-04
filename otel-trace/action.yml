@@ -1,0 +1,41 @@
+name: otel-trace
+description: >
+  Exports this workflow run's job and step timings as OpenTelemetry traces via
+  corentinmusard/otel-cicd-action. Does nothing unless `otlp-endpoint` is set.
+author: tstapler
+branding:
+  icon: share-2
+  color: blue
+
+inputs:
+  otlp-endpoint:
+    description: OTLP endpoint. Empty (the default) skips the export.
+    default: ''
+  otlp-headers:
+    description: Headers for the endpoint, such as an auth token. Pass from a secret.
+    default: ''
+  service-name:
+    description: OpenTelemetry service name.
+    default: ''
+  run-id:
+    description: Run to export. Default is the current run, so call this from a final job that `needs:` all others, or from a workflow_run workflow with that event's run id.
+    default: ''
+  github-token:
+    description: Token with actions read access (required for private repos).
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.otlp-endpoint == ''
+      shell: bash
+      run: echo "::notice title=otel-trace::otlp-endpoint is empty; skipping trace export"
+
+    - if: inputs.otlp-endpoint != ''
+      uses: corentinmusard/otel-cicd-action@4826b79d63662fa91657272e7711420cb6aea543 # v4.2.0
+      with:
+        otlpEndpoint: ${{ inputs.otlp-endpoint }}
+        otlpHeaders: ${{ inputs.otlp-headers }}
+        otelServiceName: ${{ inputs.service-name }}
+        runId: ${{ inputs.run-id }}
+        githubToken: ${{ inputs.github-token }}

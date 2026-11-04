@@ -1,0 +1,225 @@
+name: Self-test
+
+# Runs every action from this checkout on a real ubuntu-latest runner and asserts behavior.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mem-sampler:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./mem-sampler
+        id: ms
+
+      - name: Wrap a 2 GB memory hog
+        run: |
+          before=$(free -m | awk '/Mem:/{print $3}')
+          echo "before=$before" >> "$GITHUB_ENV"
+          mem-sampler --out "$RUNNER_TEMP/ci-mem/metrics.json" --label selftest --interval 2 -- \
+            python3 -c "
+          import time
+          b = bytearray(2 * 1024**3)
+          for i in range(0, len(b), 4096): b[i] = 1
+          time.sleep(7)
+          "
+
+      - name: Assert metrics are plausible
+        run: |
+          cat "$RUNNER_TEMP/ci-mem/metrics.json"
+          python3 - <<'EOF'
+          import json, os
+          d = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "ci-mem", "metrics.json")))
+          m = {x["name"]: x["value"] for x in d["metrics"]}
+          before = int(os.environ["before"])
+          assert d["schema"] == 1
+          assert m["peak_used"] - before >= 1500, (m, before)   # the 2 GB hog must show up
+          assert 0 < m["min_available"] < m["peak_used"] + m["min_available"]
+          print("peak_used", m["peak_used"], "before", before, "min_available", m["min_available"])
+          EOF
+
+      - name: Exit status passes through and warning fires
+        run: |
+          set +e
+          mem-sampler --out "$RUNNER_TEMP/ci-mem/m2.json" --label rc --interval 1 --warn-avail-mb 999999 -- bash -c 'sleep 2; exit 3'
+          rc=$?
+          [ "$rc" = 3 ] || { echo "expected rc 3, got $rc"; exit 1; }
+
+      - uses: ./mem-sampler/report
+        with:
+          metrics: ${{ runner.temp }}/ci-mem/metrics.json
+          title: Self-test memory
+          tag: selftest-mem
+          comment: 'false'
+
+  gradle-ci-memory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Simulate an 8 GB / 2 CPU runner
+        id: sim
+        uses: ./gradle-ci-memory
+        with:
+          total-memory-mb: '7168'
+          cpus: '2'
+
+      - name: Assert simulated sizes
+        env:
+          G: ${{ steps.sim.outputs.gradle-heap-mb }}
+          K: ${{ steps.sim.outputs.kotlin-heap-mb }}
+          W: ${{ steps.sim.outputs.workers-max }}
+        run: |
+          echo "gradle=$G kotlin=$K workers=$W"
+          [ "$G" = 1152 ] && [ "$K" = 2304 ] && [ "$W" = 1 ]
+          [ $(( G + K + W * 1024 )) -lt 7168 ]
+          grep -q "^kotlin.daemon.jvmargs=-Xmx${K}m$" ~/.gradle/gradle.properties
+          rm ~/.gradle/gradle.properties
+
+      - name: Size for the real runner, with diagnostics
+        id: real
+        uses: ./gradle-ci-memory
+        with:
+          kotlin-gc-log: 'true'
+          heap-dump-on-oom: 'true'
+          kotlin-build-report: 'true'
+          kotlin-fallback: disable
+
+      - name: Assert real sizes fit the machine
+        env:
+          G: ${{ steps.real.outputs.gradle-heap-mb }}
+          K: ${{ steps.real.outputs.kotlin-heap-mb }}
+          W: ${{ steps.real.outputs.workers-max }}
+          TOTAL: ${{ steps.real.outputs.total-mb }}
+        run: |
+          echo "total=$TOTAL gradle=$G kotlin=$K workers=$W"
+          real_total=$(free -m | awk '/Mem:/{print $2}')
+          [ "$TOTAL" -le "$real_total" ]
+          [ $(( G + K + W * 1024 )) -lt "$TOTAL" ]
+          cat ~/.gradle/gradle.properties
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: '9.3.1'
+          cache-disabled: true
+
+      - name: Kotlin daemon really starts with the computed flags
+        env:
+          DIAG: ${{ steps.real.outputs.diagnostics-dir }}
+          K: ${{ steps.real.outputs.kotlin-heap-mb }}
+        run: >
+          bash test/kotlin-daemon-probe.sh 2.4.10
+          "-Xmx${K}m" "-XX:+HeapDumpOnOutOfMemoryError" "-XX:HeapDumpPath=$DIAG"
+          "-Xlog:gc*:file=$DIAG/kotlin-daemon-gc.log"
+
+      - name: Plain kotlin.daemon.jvm.options is ignored in gradle.properties (documents why we use kotlin.daemon.jvmargs)
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/guh-plain
+        run: |
+          mkdir -p "$GRADLE_USER_HOME"
+          echo 'kotlin.daemon.jvm.options=-Xmx777m' > "$GRADLE_USER_HOME/gradle.properties"
+          if bash test/kotlin-daemon-probe.sh 2.4.10 "-Xmx777m"; then
+            echo "::warning title=behavior changed::kotlin.daemon.jvm.options is now honored in gradle.properties; revisit gradle-ci-memory"
+          else
+            echo "confirmed: kotlin.daemon.jvm.options in gradle.properties did not reach the daemon"
+          fi
+
+      - uses: ./gradle-ci-memory/effective-flags
+        if: always()
+
+      - name: Kotlin daemon wrote a GC log
+        env:
+          DIAG: ${{ steps.real.outputs.diagnostics-dir }}
+        run: ls -l "$DIAG" && test -s "$DIAG/kotlin-daemon-gc.log"
+
+      - name: Upload diagnostics
+        id: up
+        if: always()
+        uses: ./jvm-diagnostics-upload
+        with:
+          name: selftest-jvm-diagnostics
+          search-dirs: ${{ runner.temp }}/none
+          extra-paths: ${{ steps.real.outputs.diagnostics-dir }}
+          retention-days: '1'
+
+      - name: Assert something was collected
+        env:
+          COUNT: ${{ steps.up.outputs.file-count }}
+        run: '[ "${COUNT:-0}" -ge 1 ]'
+
+  bazel-profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      USE_BAZEL_VERSION: 9.3.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./bazel-profile
+        id: bp
+
+      - name: Minimal Bazel workspace
+        run: |
+          mkdir -p "$RUNNER_TEMP/ws" && cd "$RUNNER_TEMP/ws"
+          echo 'module(name = "selftest")' > MODULE.bazel
+          cat > BUILD.bazel <<'EOF'
+          genrule(name = "hello", outs = ["hello.txt"], cmd = "echo hi > $@")
+          EOF
+          bazel build //:hello
+
+      - name: Assert profile was written
+        env:
+          PROFILE: ${{ steps.bp.outputs.profile-path }}
+          MEMPROFILE: ${{ steps.bp.outputs.memory-profile-path }}
+        run: |
+          ls -l "$PROFILE"
+          test -s "$PROFILE"
+          cat "$HOME/.bazelrc"
+
+      - uses: ./bazel-profile/report
+        if: always()
+        with:
+          profile-path: ${{ steps.bp.outputs.profile-path }}
+          name: selftest-bazel-profile
+          retention-days: '1'
+
+  monitors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./runner-monitor
+
+      - name: Do some work for the monitor to observe
+        run: sleep 12
+
+      - name: otel-trace is a no-op without an endpoint
+        uses: ./otel-trace

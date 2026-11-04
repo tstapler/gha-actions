@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# mem-sampler: run a command while sampling whole-machine and per-process memory.
+#
+# Usage: mem-sampler --out <metrics.json> --label <label> [options] -- <command...>
+#   --interval <s>        seconds between samples            (default 30, env MEM_SAMPLE_SECS)
+#   --top <n>             processes listed per sample        (default 6,  env MEM_TOP_N)
+#   --warn-avail-mb <mb>  ::warning below this headroom      (default 2000, env MEM_WARN_AVAIL_MB)
+#   --no-summary          do not write the step summary
+#
+# Samples go to stdout (the job log survives a killed runner; files and the step summary do not):
+#   [mem]     whole-machine used/available MB
+#   [mem-top] RSS, -Xmx and a recognisable name of the largest processes
+# The command's exit status is returned unchanged.
+# Metrics JSON is benchdiff's canonical format (peak_used = max, min_available = min).
+set -o pipefail
+
+out="" label="" interval=${MEM_SAMPLE_SECS:-30} top=${MEM_TOP_N:-6}
+warn_avail_mb=${MEM_WARN_AVAIL_MB:-2000} summary=1
+
+usage() { echo "usage: mem-sampler --out <metrics.json> --label <label> [--interval s] [--top n] [--warn-avail-mb mb] [--no-summary] -- <command...>" >&2; }
+
+# Stdin: "rss_kb args..." lines. Stdout: "[mem-top] <rss>M <-Xmx> <name>".
+classify() {
+  awk '{
+    rss = $1 / 1024; $1 = ""; xmx = ""; name = ""
+    if (match($0, /-Xmx[0-9]+[kKmMgG]?/)) xmx = substr($0, RSTART, RLENGTH)
+    if      ($0 ~ /KotlinCompileDaemon/)                                    name = "kotlin-daemon"
+    else if ($0 ~ /GradleWorkerMain|Gradle Test Executor/)                  name = "gradle-test-fork"
+    else if ($0 ~ /GradleDaemon|org\.gradle\.launcher\.daemon/)             name = "gradle-daemon"
+    else if ($0 ~ /GradleWrapperMain|gradle-launcher/)                      name = "gradle-client"
+    else if ($0 ~ /A-server\.jar|bazel\(|bazel-[0-9.]+/)                    name = "bazel-server"
+    else if ($0 ~ /rules_kotlin|KotlinBuilder|JavaBuilder|desugar_java8|d8_[a-z_]+|BazelWorker|--persistent_worker/) name = "bazel-worker"
+    else if ($0 ~ /Xvfb/)                                                   name = "xvfb"
+    else if ($0 ~ /Runner\.Worker/)                                         name = "runner-worker"
+    else if ($0 ~ /remotejdk[0-9]*/)                                        name = "bazel-jvm"
+    else name = substr($0, 2, 60)
+    printf "[mem-top] %dM %s %s\n", rss, xmx, name
+  }'
+}
+
+# Appends "used avail" to $samples, prints [mem] and [mem-top] lines, and records the top
+# lines of the lowest-headroom sample in $worst_top (state kept in $min_file).
+take_sample() {
+  local line used avail top_lines
+  line=$(free -m | awk '/Mem:/{print $3, $7}')
+  used=${line% *}; avail=${line#* }
+  echo "$line" >> "$samples"
+  echo "[mem] used=${used}M avail=${avail}M"
+  top_lines=$(ps -eo rss,args --sort=-rss --no-headers | head -n "$top" | classify)
+  echo "$top_lines"
+  # State lives in files: the periodic sampler runs in a subshell, so variables do not carry over.
+  local min_seen
+  min_seen=$(cat "$min_file" 2>/dev/null)
+  if [ -z "$min_seen" ] || [ "$avail" -lt "$min_seen" ]; then
+    echo "$avail" > "$min_file"
+    printf '%s\n' "$top_lines" > "$worst_top"
+  fi
+}
+
+if [ "${1:-}" = --classify ]; then classify; exit 0; fi  # used by tests: stdin "rss_kb args" lines
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --out) out=$2; shift 2 ;;
+    --label) label=$2; shift 2 ;;
+    --interval) interval=$2; shift 2 ;;
+    --top) top=$2; shift 2 ;;
+    --warn-avail-mb) warn_avail_mb=$2; shift 2 ;;
+    --no-summary) summary=0; shift ;;
+    --) shift; break ;;
+    *) usage; exit 2 ;;
+  esac
+done
+{ [ -n "$out" ] && [ -n "$label" ] && [ $# -gt 0 ]; } || { usage; exit 2; }
+
+samples=$(mktemp); worst_top=$(mktemp); min_file=$(mktemp)
+total_mb=$(free -m | awk '/Mem:/{print $2}')
+
+( while :; do take_sample; sleep "$interval"; done ) &
+sampler=$!
+trap 'kill "$sampler" 2>/dev/null' EXIT
+
+"$@"
+status=$?
+
+kill "$sampler" 2>/dev/null
+wait "$sampler" 2>/dev/null
+# The log always ends with the post-command state.
+take_sample
+
+read -r peak_used min_avail < <(awk 'NR==1{mn=$2} {if($1>mu)mu=$1; if($2<mn)mn=$2} END{print mu+0, mn+0}' "$samples")
+if [ -s "$samples" ]; then
+  mkdir -p "$(dirname "$out")"
+  printf '{"schema":1,"env":{"sha":"%s"},"metrics":[{"group":"ci-memory/%s","name":"peak_used","measure":"max","unit":"MB","better":"lower","value":%s},{"group":"ci-memory/%s","name":"min_available","measure":"min","unit":"MB","better":"higher","value":%s}]}\n' \
+    "${GITHUB_SHA:-unknown}" "$label" "$peak_used" "$label" "$min_avail" > "$out"
+  if [ "$summary" = 1 ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+      echo "### Memory: $label"
+      echo
+      echo "| total | peak used | min available | samples |"
+      echo "|---|---|---|---|"
+      echo "| ${total_mb} MB | ${peak_used} MB | ${min_avail} MB | $(wc -l < "$samples") |"
+      echo
+      echo "Largest processes at the lowest-headroom sample (from the periodic sampler):"
+      echo
+      echo '```'
+      cat "$worst_top"
+      echo '```'
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
+  if [ "$min_avail" -lt "$warn_avail_mb" ]; then
+    echo "::warning title=Low memory headroom ($label)::available memory dropped to ${min_avail}M (threshold ${warn_avail_mb}M); an OOM kill is likely if this regresses"
+  fi
+fi
+exit $status

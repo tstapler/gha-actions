@@ -1,0 +1,116 @@
+name: gradle-ci-memory
+description: >
+  Sizes Gradle and Kotlin-daemon heaps and worker count from the runner's actual RAM and CPUs
+  (with a cap so daemons plus test forks never exceed RAM) and writes them to
+  ~/.gradle/gradle.properties, which outranks the project's gradle.properties. Optional Kotlin
+  daemon GC log and heap-dump-on-OOM diagnostics.
+author: tstapler
+branding:
+  icon: cpu
+  color: blue
+
+inputs:
+  gradle-heap-percent:
+    description: Gradle daemon heap as a percent of RAM.
+    default: '16'
+  kotlin-heap-percent:
+    description: Kotlin compile daemon heap as a percent of RAM.
+    default: '32'
+  gradle-heap-mb:
+    description: Explicit Gradle heap in MB; skips derivation for this value.
+    default: ''
+  kotlin-heap-mb:
+    description: Explicit Kotlin daemon heap in MB; skips derivation for this value.
+    default: ''
+  workers-max:
+    description: Explicit org.gradle.workers.max. Default is CPUs / 2, at least 1.
+    default: ''
+  gradle-heap-max-mb:
+    description: Upper bound for the derived Gradle heap.
+    default: '4096'
+  kotlin-heap-max-mb:
+    description: Upper bound for the derived Kotlin daemon heap.
+    default: '8192'
+  test-fork-heap-mb:
+    description: Heap assumed per concurrent test fork when checking the budget.
+    default: '1024'
+  reserve-mb:
+    description: RAM kept free for the OS, runner agent and native memory.
+    default: '2048'
+  total-memory-mb:
+    description: Override detected RAM (simulate a smaller runner, or pin a value).
+    default: ''
+  cpus:
+    description: Override detected CPU count.
+    default: ''
+  kotlin-gc-log:
+    description: Write a Kotlin daemon GC log (-Xlog:gc*) into diagnostics-dir.
+    default: 'false'
+  heap-dump-on-oom:
+    description: Dump the heap of the Gradle and Kotlin daemons on OutOfMemoryError into diagnostics-dir.
+    default: 'false'
+  kotlin-build-report:
+    description: Write Kotlin build reports (kotlin.build.report.output=file) into diagnostics-dir/kotlin-build-reports.
+    default: 'false'
+  kotlin-fallback:
+    description: "'disable' sets kotlin.daemon.useFallbackStrategy=false so a Kotlin daemon failure fails fast instead of recompiling in the Gradle JVM."
+    default: keep
+  diagnostics-dir:
+    description: Where diagnostics land. Default is $RUNNER_TEMP/jvm-diagnostics.
+    default: ''
+
+outputs:
+  gradle-heap-mb:
+    description: Gradle daemon heap chosen.
+    value: ${{ steps.compute.outputs.gradle-heap-mb }}
+  kotlin-heap-mb:
+    description: Kotlin daemon heap chosen.
+    value: ${{ steps.compute.outputs.kotlin-heap-mb }}
+  workers-max:
+    description: org.gradle.workers.max chosen.
+    value: ${{ steps.compute.outputs.workers-max }}
+  total-mb:
+    description: RAM the sizing was based on.
+    value: ${{ steps.compute.outputs.total-mb }}
+  diagnostics-dir:
+    description: Directory holding GC logs and heap dumps (pass to jvm-diagnostics-upload).
+    value: ${{ steps.compute.outputs.diagnostics-dir }}
+
+runs:
+  using: composite
+  steps:
+    - id: compute
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        GRADLE_HEAP_PCT: ${{ inputs.gradle-heap-percent }}
+        KOTLIN_HEAP_PCT: ${{ inputs.kotlin-heap-percent }}
+        GRADLE_HEAP_MB: ${{ inputs.gradle-heap-mb }}
+        KOTLIN_HEAP_MB: ${{ inputs.kotlin-heap-mb }}
+        WORKERS_MAX: ${{ inputs.workers-max }}
+        GRADLE_HEAP_MAX_MB: ${{ inputs.gradle-heap-max-mb }}
+        KOTLIN_HEAP_MAX_MB: ${{ inputs.kotlin-heap-max-mb }}
+        TEST_FORK_HEAP_MB: ${{ inputs.test-fork-heap-mb }}
+        RESERVE_MB: ${{ inputs.reserve-mb }}
+        TOTAL_MB: ${{ inputs.total-memory-mb }}
+        CPUS: ${{ inputs.cpus }}
+        KOTLIN_FALLBACK: ${{ inputs.kotlin-fallback }}
+        GC_LOG: ${{ inputs.kotlin-gc-log }}
+        HEAP_DUMP: ${{ inputs.heap-dump-on-oom }}
+        KOTLIN_BUILD_REPORT: ${{ inputs.kotlin-build-report }}
+        DIAG_DIR_IN: ${{ inputs.diagnostics-dir }}
+      run: |
+        diag_dir=${DIAG_DIR_IN:-$RUNNER_TEMP/jvm-diagnostics}
+        flags=()
+        if [ "$GC_LOG" = true ]; then flags+=("-Xlog:gc*:file=$diag_dir/kotlin-daemon-gc.log"); fi
+        if [ "$HEAP_DUMP" = true ]; then
+          flags+=("-XX:+HeapDumpOnOutOfMemoryError" "-XX:HeapDumpPath=$diag_dir")
+          export GRADLE_EXTRA_JVMARGS="-XX:HeapDumpPath=$diag_dir"
+        fi
+        mkdir -p "$diag_dir"
+        if [ "$KOTLIN_BUILD_REPORT" = true ]; then export KOTLIN_BUILD_REPORT_DIR="$diag_dir/kotlin-build-reports"; fi
+        echo "diagnostics-dir=$diag_dir" >> "$GITHUB_OUTPUT"
+        # kotlin.daemon.jvmargs is space separated. (kotlin.daemon.jvm.options is ignored in gradle.properties; see README.)
+        KOTLIN_DIAG_FLAGS=$(IFS=" "; echo "${flags[*]}")
+        export KOTLIN_DIAG_FLAGS
+        bash "$ACTION_PATH/compute.sh"

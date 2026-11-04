@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: >
+          shellcheck
+          gradle-ci-memory/compute.sh jvm-diagnostics-upload/collect.sh
+          bazel-profile/setup.sh bazel-profile/summarize.sh
+          mem-sampler/bin/mem-sampler test/run.sh test/kotlin-daemon-probe.sh
+
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
+
+      - name: zizmor
+        run: uvx 'zizmor==1.25.2' --no-progress .
+
+      - name: Unit tests
+        run: bash test/run.sh

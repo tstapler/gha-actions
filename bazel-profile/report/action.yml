@@ -1,0 +1,39 @@
+name: bazel-profile report
+description: >
+  Summarises the Bazel profile (critical path and slowest actions via `bazel analyze-profile`)
+  into the step summary and uploads the profile files as an artifact. Run with `if: always()`.
+author: tstapler
+
+inputs:
+  profile-path:
+    description: The profile-path output of bazel-profile.
+    required: true
+  name:
+    description: Artifact name; unique per job in a matrix.
+    default: bazel-profile
+  top-lines:
+    description: Lines of analyze-profile output shown in the summary.
+    default: '60'
+  retention-days:
+    description: Artifact retention.
+    default: '7'
+
+runs:
+  using: composite
+  steps:
+    - id: summarize
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PROFILE_PATH: ${{ inputs.profile-path }}
+        TOP_N: ${{ inputs.top-lines }}
+      run: |
+        echo "dir=$(dirname "$PROFILE_PATH")" >> "$GITHUB_OUTPUT"
+        bash "$ACTION_PATH/../summarize.sh"
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ steps.summarize.outputs.dir }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ignore

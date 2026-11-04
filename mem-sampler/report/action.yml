@@ -1,0 +1,116 @@
+name: mem-sampler report
+description: >
+  Posts a sticky PR comment (via tstapler/benchdiff) from a mem-sampler metrics file, optionally
+  diffed against the default branch's last run. Run it after the wrapped step with `if: always()`.
+author: tstapler
+branding:
+  icon: bar-chart-2
+  color: blue
+
+inputs:
+  metrics:
+    description: Metrics JSON written by `mem-sampler --out`.
+    required: true
+  title:
+    description: Comment heading.
+    required: true
+  tag:
+    description: Sticky-comment key; unique per report on a PR.
+    required: true
+  baseline-cache:
+    description: >
+      'true' restores the default branch's metrics (actions/cache) as the comparison base on PRs
+      and saves them on pushes to the default branch. 'false' reports head only unless `baseline` is set.
+    default: 'true'
+  baseline:
+    description: Explicit baseline metrics file; overrides baseline-cache for the comparison.
+    default: ''
+  threshold:
+    description: Percent change treated as noise.
+    default: '10'
+  min-abs:
+    description: Absolute change in MB treated as noise.
+    default: '500'
+  comment:
+    description: "Post the sticky PR comment (needs pull-requests: write)."
+    default: 'true'
+  github-token:
+    description: Token for the comment.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - id: paths
+      shell: bash
+      env:
+        METRICS: ${{ inputs.metrics }}
+        TAG: ${{ inputs.tag }}
+        BASELINE: ${{ inputs.baseline }}
+        USE_CACHE: ${{ inputs.baseline-cache }}
+      run: |
+        if [ ! -s "$METRICS" ]; then
+          echo "::notice title=mem-sampler report::no metrics at $METRICS; skipping"
+          echo "have-metrics=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "have-metrics=true" >> "$GITHUB_OUTPUT"
+        safe_tag=$(printf '%s' "$TAG" | tr -c 'A-Za-z0-9._-' '_')
+        base_dir="$RUNNER_TEMP/mem-sampler-base-$safe_tag"
+        mkdir -p "$base_dir"
+        echo "base-dir=$base_dir" >> "$GITHUB_OUTPUT"
+        echo "cache-key=mem-sampler-$safe_tag" >> "$GITHUB_OUTPUT"
+        if [ -n "$BASELINE" ]; then echo "explicit-baseline=true" >> "$GITHUB_OUTPUT"; fi
+        if [ "$USE_CACHE" = true ] && [ -z "$BASELINE" ]; then echo "use-cache=true" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Restore default-branch baseline
+      if: steps.paths.outputs.use-cache == 'true' && github.event_name == 'pull_request'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.base-dir }}
+        key: ${{ steps.paths.outputs.cache-key }}-${{ github.sha }}
+        restore-keys: ${{ steps.paths.outputs.cache-key }}-
+
+    - name: Save baseline (default branch pushes)
+      if: >-
+        steps.paths.outputs.use-cache == 'true' && github.event_name == 'push' &&
+        github.ref_name == github.event.repository.default_branch
+      shell: bash
+      env:
+        METRICS: ${{ inputs.metrics }}
+        BASE_DIR: ${{ steps.paths.outputs.base-dir }}
+      run: cp "$METRICS" "$BASE_DIR/metrics.json"
+
+    - name: Persist baseline
+      if: >-
+        steps.paths.outputs.use-cache == 'true' && github.event_name == 'push' &&
+        github.ref_name == github.event.repository.default_branch
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.base-dir }}
+        key: ${{ steps.paths.outputs.cache-key }}-${{ github.sha }}
+
+    - id: base
+      if: steps.paths.outputs.have-metrics == 'true'
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline }}
+        BASE_DIR: ${{ steps.paths.outputs.base-dir }}
+      run: |
+        if [ -n "$BASELINE" ] && [ -s "$BASELINE" ]; then echo "file=$BASELINE" >> "$GITHUB_OUTPUT"
+        elif [ -s "$BASE_DIR/metrics.json" ] && [ "$GITHUB_EVENT_NAME" = pull_request ]; then echo "file=$BASE_DIR/metrics.json" >> "$GITHUB_OUTPUT"
+        else echo "file=" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Sticky PR comment
+      if: steps.paths.outputs.have-metrics == 'true' && inputs.comment == 'true' && github.event_name == 'pull_request'
+      continue-on-error: true
+      uses: tstapler/benchdiff@3921c948d6d9cbc538a62d3808d979c06cc13a94 # v0.1.0
+      with:
+        head: ${{ inputs.metrics }}
+        base: ${{ steps.base.outputs.file }}
+        format: benchdiff
+        threshold: ${{ inputs.threshold }}
+        min-abs: ${{ inputs.min-abs }}
+        title: ${{ inputs.title }}
+        tag: ${{ inputs.tag }}
+        github-token: ${{ inputs.github-token }}

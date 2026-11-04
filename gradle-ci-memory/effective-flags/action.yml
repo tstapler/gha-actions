@@ -1,0 +1,27 @@
+name: gradle-ci-memory effective flags
+description: >
+  Prints the JVM flags the Gradle and Kotlin daemons actually started with (ps, plus jcmd
+  VM.flags when available). Run after the build with `if: always()`.
+author: tstapler
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        {
+          echo "### Effective Gradle / Kotlin daemon JVM flags"
+          echo '```'
+          found=0
+          while read -r pid args; do
+            found=1
+            name=gradle-daemon; case $args in *KotlinCompileDaemon*) name=kotlin-daemon ;; esac
+            echo "$name pid=$pid"
+            echo "$args" | tr ' ' '\n' | grep -E '^-(X|D(kotlin|org\.gradle))' | sed 's/^/  /' || true
+            if command -v jcmd >/dev/null 2>&1; then
+              jcmd "$pid" VM.flags 2>/dev/null | tr ' ' '\n' | grep -E '^-XX:(MaxHeapSize|\+HeapDump|HeapDumpPath)' | sed 's/^/  vm: /' || true
+            fi
+          done < <(pgrep -af 'KotlinCompileDaemon|GradleDaemon' || true)
+          [ "$found" = 1 ] || echo "no Gradle/Kotlin daemon running (build used --no-daemon, or it already exited)"
+          echo '```'
+        } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"

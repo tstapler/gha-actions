@@ -1,0 +1,34 @@
+name: runner-monitor
+description: >
+  Thin wrapper over step-security/workflow-telemetry-action (CPU, memory, disk and network
+  charts plus a step trace in the job summary) with conservative defaults: no PR comment, no
+  command-line capture, and no metric upload to a third-party chart service.
+author: tstapler
+branding:
+  icon: monitor
+  color: blue
+
+inputs:
+  metric-frequency:
+    description: Seconds between samples.
+    default: '5'
+  save-charts:
+    description: "'true' sends metric data to api.globadge.com to render chart images; 'false' keeps data on the runner."
+    default: 'false'
+  comment-on-pr:
+    description: Post results as a PR comment (needs pull-requests write).
+    default: 'false'
+  proc-trace-table:
+    description: Show full command lines of traced processes. May expose secrets passed as arguments.
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: step-security/workflow-telemetry-action@dbe3c1c09393511e90d52c6f49096984d1b7fe3b # v2.0.0
+      with:
+        metric_frequency: ${{ inputs.metric-frequency }}
+        save_charts: ${{ inputs.save-charts }}
+        comment_on_pr: ${{ inputs.comment-on-pr }}
+        proc_trace_table_show: ${{ inputs.proc-trace-table }}
+        job_summary: 'true'

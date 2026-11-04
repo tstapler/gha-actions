@@ -1,0 +1,61 @@
+name: jvm-diagnostics-upload
+description: >
+  Collects hs_err logs, heap dumps (size-capped), GC logs and Gradle/Kotlin build reports, prints
+  a size table to the step summary, and uploads them as one artifact. Call with `if: always()`.
+author: tstapler
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  name:
+    description: Artifact name. Make it unique per job in a matrix.
+    default: jvm-diagnostics
+  search-dirs:
+    description: Newline-separated directories to scan. Default is the workspace.
+    default: ''
+  extra-paths:
+    description: Newline-separated extra files, directories or globs to include verbatim (for example the gradle-ci-memory diagnostics-dir output).
+    default: ''
+  max-file-mb:
+    description: Files larger than this are listed in the summary but not uploaded.
+    default: '512'
+  max-total-mb:
+    description: Stop collecting once this much has been gathered.
+    default: '1024'
+  include-gradle-reports:
+    description: Also collect build/reports trees (Gradle test and Kotlin build reports).
+    default: 'true'
+  retention-days:
+    description: Artifact retention.
+    default: '7'
+
+outputs:
+  file-count:
+    description: Number of files collected.
+    value: ${{ steps.collect.outputs.count }}
+  bytes:
+    description: Bytes collected.
+    value: ${{ steps.collect.outputs.bytes }}
+
+runs:
+  using: composite
+  steps:
+    - id: collect
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        SEARCH_DIRS: ${{ inputs.search-dirs }}
+        EXTRA_PATHS: ${{ inputs.extra-paths }}
+        MAX_FILE_MB: ${{ inputs.max-file-mb }}
+        MAX_TOTAL_MB: ${{ inputs.max-total-mb }}
+        INCLUDE_GRADLE_REPORTS: ${{ inputs.include-gradle-reports }}
+      run: OUT_DIR="$RUNNER_TEMP/jvm-diagnostics-collected" bash "$ACTION_PATH/collect.sh"
+
+    - if: steps.collect.outputs.count != '0'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ runner.temp }}/jvm-diagnostics-collected
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ignore

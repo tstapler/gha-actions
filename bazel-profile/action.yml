@@ -1,0 +1,47 @@
+name: bazel-profile
+description: >
+  Makes every Bazel build in the job write a JSON trace profile and memory profile (plus the
+  resource-collection flags your Bazel supports) by writing a bazelrc fragment. Pair with
+  bazel-profile/report after the build to summarise and upload.
+author: tstapler
+branding:
+  icon: clock
+  color: blue
+
+inputs:
+  bazelrc-mode:
+    description: "'user' appends the fragment to ~/.bazelrc (no repo edits). 'none' only writes the fragment; import it yourself with --bazelrc or try-import."
+    default: user
+  collect-resource-flags:
+    description: Add the optional --experimental_collect_* flags that the installed Bazel lists in `bazel help build`.
+    default: 'true'
+  extra-flags:
+    description: Extra newline-separated `build ...` lines for the fragment.
+    default: ''
+  profile-dir:
+    description: Directory for profiles. Default is $RUNNER_TEMP/bazel-profile.
+    default: ''
+
+outputs:
+  profile-path:
+    description: Path of the --profile file.
+    value: ${{ steps.setup.outputs.profile-path }}
+  memory-profile-path:
+    description: Path of the --memory_profile file.
+    value: ${{ steps.setup.outputs.memory-profile-path }}
+  bazelrc-fragment:
+    description: Path of the generated bazelrc fragment.
+    value: ${{ steps.setup.outputs.bazelrc-fragment }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PROFILE_DIR_IN: ${{ inputs.profile-dir }}
+        BAZELRC_MODE: ${{ inputs.bazelrc-mode }}
+        COLLECT: ${{ inputs.collect-resource-flags }}
+        EXTRA_FLAGS: ${{ inputs.extra-flags }}
+      run: PROFILE_DIR="${PROFILE_DIR_IN:-$RUNNER_TEMP/bazel-profile}" bash "$ACTION_PATH/setup.sh"

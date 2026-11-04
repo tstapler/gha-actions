@@ -1,0 +1,26 @@
+name: mem-sampler
+description: >
+  Puts the `mem-sampler` command on PATH. Wrap any command with it to log whole-machine and
+  per-process memory to the job log while the command runs, and to write benchdiff-format
+  peak/min metrics. Use mem-sampler/report afterwards for a sticky PR comment.
+author: tstapler
+branding:
+  icon: activity
+  color: blue
+
+outputs:
+  script-path:
+    description: Absolute path of the mem-sampler script, for use outside a shell step.
+    value: ${{ steps.install.outputs.script-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: | # zizmor: ignore[github-env] the path is this action's own checkout, not user input
+        chmod +x "$ACTION_PATH/bin/mem-sampler"
+        echo "$ACTION_PATH/bin" >> "$GITHUB_PATH"
+        echo "script-path=$ACTION_PATH/bin/mem-sampler" >> "$GITHUB_OUTPUT"
