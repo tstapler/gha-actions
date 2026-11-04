@@ -223,3 +223,58 @@ jobs:
 
       - name: otel-trace is a no-op without an endpoint
         uses: ./otel-trace
+
+  mem-sampler-bare-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Container really lacks ps and free
+        run: |
+          if command -v ps >/dev/null 2>&1 || command -v free >/dev/null 2>&1; then
+            echo "::warning title=image changed::ubuntu:24.04 now has ps or free; this job no longer proves the /proc fallback"
+          fi
+          command -v ps || echo "no ps"
+          command -v free || echo "no free"
+
+      - uses: ./mem-sampler
+
+      - name: Sampler works through /proc
+        run: |
+          mem-sampler --out out/metrics.json --label container --interval 1 -- sleep 3 | tee out.log
+          grep -q '^\[mem\] used=' out.log
+          grep -q '^\[mem-top\]' out.log
+          grep -q '"name":"peak_used"' out/metrics.json
+
+  go-diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Multi-package go test with gctrace on test binaries only
+        run: |
+          mkdir -p "$RUNNER_TEMP/gomod/a" "$RUNNER_TEMP/gomod/b" && cd "$RUNNER_TEMP/gomod"
+          printf 'module example.com/probe\n\ngo 1.21\n' > go.mod
+          for p in a b; do
+            printf 'package %s\n\nimport "testing"\n\nvar sink [][]byte\n\nfunc TestAlloc(t *testing.T) {\n\tfor i := 0; i < 150; i++ {\n\t\tsink = append(sink, make([]byte, 1<<20))\n\t}\n}\n' "$p" > "$p/alloc_test.go"
+          done
+          # -memprofile is rejected for several packages; -exec scopes gctrace to the test binaries.
+          if go test -memprofile mem.out ./... >/dev/null 2>&1; then echo "memprofile now works for multiple packages"; else echo "confirmed: -memprofile rejected for multiple packages"; fi
+          go test -json -exec "env GODEBUG=gctrace=1" ./... > "$RUNNER_TEMP/go-test.json"
+
+      - uses: ./go-diagnostics-upload
+        with:
+          json-file: ${{ runner.temp }}/go-test.json
+          name: selftest-go-diagnostics
+          retention-days: '1'
+
+      - name: gctrace reached the JSON stream
+        run: grep -q 'MB goal' "$RUNNER_TEMP/go-test.json"

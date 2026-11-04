@@ -1,0 +1,54 @@
+name: go-diagnostics-upload
+description: >
+  Summarises a `go test -json` file (slowest packages and tests, per-package GC pressure when
+  gctrace was on) into the step summary and uploads the JSON, JUnit and any extra profiles as an
+  artifact. Works for multi-package runs, where `go test -memprofile` is rejected.
+author: tstapler
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  json-file:
+    description: Path of the `go test -json` stream, for example from `gotestsum --jsonfile`.
+    default: ''
+  junit-file:
+    description: Optional JUnit XML path (`gotestsum --junitfile`).
+    default: ''
+  extra-paths:
+    description: Newline-separated extra files or globs to upload, such as pprof profiles.
+    default: ''
+  name:
+    description: Artifact name; unique per job in a matrix.
+    default: go-diagnostics
+  top-n:
+    description: Rows per table in the summary.
+    default: '10'
+  retention-days:
+    description: Artifact retention.
+    default: '7'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        JSON_FILE: ${{ inputs.json-file }}
+        TOP_N: ${{ inputs.top-n }}
+      run: |
+        if [ -n "$JSON_FILE" ] && [ -s "$JSON_FILE" ] && command -v python3 >/dev/null 2>&1; then
+          python3 -I "$ACTION_PATH/summarize.py" "$JSON_FILE" "$TOP_N" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+        else
+          echo "::notice title=go-diagnostics-upload::no go test JSON at '$JSON_FILE' (or no python3); skipping summary"
+        fi
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.name }}
+        path: |
+          ${{ inputs.json-file }}
+          ${{ inputs.junit-file }}
+          ${{ inputs.extra-paths }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ignore

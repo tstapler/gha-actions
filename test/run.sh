@@ -118,6 +118,40 @@ assert_contains "user bazelrc updated" "$(cat "$tmp/home/.bazelrc")" "build --me
 out=$(PROFILE_PATH="$tmp/nope.gz" bash "$root/bazel-profile/summarize.sh")
 assert_contains "missing profile is a notice, not a failure" "$out" "::notice title=bazel-profile"
 
+# --- mem-sampler /proc fallback (containers without procps) ----------------------------------
+MEM_SAMPLER_FORCE_PROC=1 "$root/mem-sampler/bin/mem-sampler" --out "$tmp/proc.json" --label proc --interval 1 --no-summary -- sleep 2 >"$tmp/proclog" 2>&1
+assert_eq "proc fallback exit status" "$?" "0"
+assert_contains "proc fallback logs [mem]" "$(cat "$tmp/proclog")" "[mem] used="
+assert_contains "proc fallback logs processes" "$(cat "$tmp/proclog")" "[mem-top]"
+assert_contains "proc fallback writes metrics" "$(cat "$tmp/proc.json")" '"name":"peak_used"'
+
+# --- go-diagnostics-upload/summarize.py: real go test -json with gctrace via -exec ------------
+if command -v go >/dev/null 2>&1; then
+  gomod="$tmp/gomod"; mkdir -p "$gomod"
+  printf 'module example.com/probe\n\ngo 1.21\n' > "$gomod/go.mod"
+  cat > "$gomod/alloc_test.go" <<'EOF'
+package probe
+
+import "testing"
+
+var sink [][]byte
+
+func TestAlloc(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		sink = append(sink, make([]byte, 1<<20))
+	}
+	sink = nil
+}
+EOF
+  (cd "$gomod" && go test -json -exec "env GODEBUG=gctrace=1" ./... > "$tmp/go.json" 2>/dev/null)
+  gosum=$(python3 -I "$root/go-diagnostics-upload/summarize.py" "$tmp/go.json" 5)
+  assert_contains "go summary lists the package" "$gosum" "example.com/probe"
+  assert_contains "go summary lists the slowest test" "$gosum" "TestAlloc"
+  assert_contains "go summary has gctrace table" "$gosum" "GC pressure per package"
+fi
+printf '{"Action":"pass","Package":"p","Elapsed":1.5}\nnot json\n' > "$tmp/mini.json"
+assert_contains "malformed lines are skipped" "$(python3 -I "$root/go-diagnostics-upload/summarize.py" "$tmp/mini.json")" "| p | 1.5 | ok |"
+
 echo
 echo "$passes passed, $fails failed"
 [ "$fails" -eq 0 ]

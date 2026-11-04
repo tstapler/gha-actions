@@ -43,15 +43,44 @@ classify() {
   }'
 }
 
+# Minimal containers (e.g. mcr.microsoft.com/playwright, ubuntu) ship without procps, so `free`
+# and `ps` may be missing; fall back to /proc. MEM_SAMPLER_FORCE_PROC=1 forces the fallback (tests).
+have_procps() { [ -z "${MEM_SAMPLER_FORCE_PROC:-}" ] && command -v free >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; }
+
+# Prints "used_mb avail_mb total_mb".
+mem_line() {
+  if have_procps; then
+    free -m | awk '/Mem:/{print $3, $7, $2}'
+  else
+    awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{printf "%d %d %d\n", (t-a)/1024, a/1024, t/1024}' /proc/meminfo
+  fi
+}
+
+# Prints "rss_kb args" for the $top largest processes.
+proc_top() {
+  if have_procps; then
+    ps -eo rss,args --sort=-rss --no-headers | head -n "$top"
+    return
+  fi
+  local d rss args
+  for d in /proc/[0-9]*; do
+    rss=$(awk '/^VmRSS:/{print $2}' "$d/status" 2>/dev/null)
+    [ -n "$rss" ] || continue
+    args=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+    [ -n "$args" ] || args=$(cat "$d/comm" 2>/dev/null)
+    echo "$rss $args"
+  done | sort -rn | head -n "$top"
+}
+
 # Appends "used avail" to $samples, prints [mem] and [mem-top] lines, and records the top
 # lines of the lowest-headroom sample in $worst_top (state kept in $min_file).
 take_sample() {
   local line used avail top_lines
-  line=$(free -m | awk '/Mem:/{print $3, $7}')
+  line=$(mem_line | awk '{print $1, $2}')
   used=${line% *}; avail=${line#* }
   echo "$line" >> "$samples"
   echo "[mem] used=${used}M avail=${avail}M"
-  top_lines=$(ps -eo rss,args --sort=-rss --no-headers | head -n "$top" | classify)
+  top_lines=$(proc_top | classify)
   echo "$top_lines"
   # State lives in files: the periodic sampler runs in a subshell, so variables do not carry over.
   local min_seen
@@ -79,7 +108,7 @@ done
 { [ -n "$out" ] && [ -n "$label" ] && [ $# -gt 0 ]; } || { usage; exit 2; }
 
 samples=$(mktemp); worst_top=$(mktemp); min_file=$(mktemp)
-total_mb=$(free -m | awk '/Mem:/{print $2}')
+total_mb=$(mem_line | awk '{print $3}')
 
 ( while :; do take_sample; sleep "$interval"; done ) &
 sampler=$!
