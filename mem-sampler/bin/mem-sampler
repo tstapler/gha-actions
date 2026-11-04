@@ -31,6 +31,11 @@ classify() {
     else if ($0 ~ /A-server\.jar|bazel\(|bazel-[0-9.]+/)                    name = "bazel-server"
     else if ($0 ~ /rules_kotlin|KotlinBuilder|JavaBuilder|desugar_java8|d8_[a-z_]+|BazelWorker|--persistent_worker/) name = "bazel-worker"
     else if ($0 ~ /Xvfb/)                                                   name = "xvfb"
+    else if ($0 ~ /pkg\/tool\/[a-z0-9_]+\/(compile|link|vet|asm)( |$)/)     name = "go-toolchain"
+    else if ($0 ~ /[A-Za-z0-9_-]+\.test( |$)/)                              name = "go-test-binary"
+    else if ($0 ~ /gotestsum|go test/)                                      name = "go-test-runner"
+    else if ($0 ~ /chrom(e|ium)|headless_shell/)                            name = "chromium"
+    else if ($0 ~ /(^| |\/)(bun|node)( |$)/)                                name = "node-or-bun"
     else if ($0 ~ /Runner\.Worker/)                                         name = "runner-worker"
     else if ($0 ~ /remotejdk[0-9]*/)                                        name = "bazel-jvm"
     else name = substr($0, 2, 60)

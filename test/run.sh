@@ -62,6 +62,13 @@ assert_contains "classifies test fork before gradle daemon" "$cls" "gradle-test-
 assert_contains "classifies gradle daemon" "$cls" "gradle-daemon"
 assert_contains "classifies bazel server" "$cls" "bazel-server"
 assert_contains "classifies xvfb" "$cls" "xvfb"
+cls2=$(printf '%s\n' \
+  '1800000 /opt/hostedtoolcache/go/1.26.6/x64/pkg/tool/linux_amd64/compile -o x.a' \
+  '900000 /tmp/go-build/b001/server.test -test.timeout=15m' \
+  '800000 /usr/bin/node /x/playwright test' | "$root/mem-sampler/bin/mem-sampler" --classify)
+assert_contains "classifies go compile" "$cls2" "go-toolchain"
+assert_contains "classifies go test binary" "$cls2" "go-test-binary"
+assert_contains "classifies node" "$cls2" "node-or-bun"
 
 metrics="$tmp/m.json"
 "$root/mem-sampler/bin/mem-sampler" --out "$metrics" --label t --interval 1 --no-summary -- bash -c 'sleep 2; exit 7' >"$tmp/log" 2>&1
