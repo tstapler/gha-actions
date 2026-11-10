@@ -9,6 +9,8 @@ Reusable composite actions for CI observability. Pin by commit SHA (or `@v0`).
 | [`jvm-diagnostics-upload`](jvm-diagnostics-upload/README.md) | Collect hs_err, heap dumps, GC logs and Gradle reports into one artifact |
 | [`bazel-profile`](bazel-profile/README.md) | Profile and memory-profile every Bazel build; summarize and upload |
 | [`go-diagnostics-upload`](go-diagnostics-upload/README.md) | Summarize `go test -json` (slowest packages/tests, per-package GC pressure) and upload it |
+| [`setup-buf`](setup-buf/README.md) | Install a pinned `buf` release, checksum-verified; no GitHub API calls, so no unauthenticated rate limit |
+| [`setup-protoc`](setup-protoc/README.md) | Install a pinned `protoc` release, checksum-verified; same properties |
 | `runner-monitor` | Thin wrapper over `step-security/workflow-telemetry-action` with safe defaults |
 | `otel-trace` | Thin wrapper over `corentinmusard/otel-cicd-action`; off unless an endpoint is set |
 
