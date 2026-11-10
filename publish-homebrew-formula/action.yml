@@ -1,0 +1,63 @@
+name: publish-homebrew-formula
+description: >
+  Pushes Homebrew formula/cask files to one or more tap repositories as a GitHub App, using a
+  short-lived installation token (no stored personal access token). Retries a push that races
+  another publisher, and does nothing when a file is unchanged.
+author: tstapler
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  client-id:
+    description: The GitHub App's Client ID (repo variable HOMEBREW_TAP_APP_CLIENT_ID).
+    required: true
+  private-key:
+    description: The GitHub App's private key (secret HOMEBREW_TAP_APP_PRIVATE_KEY).
+    required: true
+  files:
+    description: >
+      Newline-separated `SOURCE:DEST` pairs. SOURCE is a path in the workspace; DEST is the path
+      inside each tap repository, for example `Formula/tool.rb` or `Casks/tool.rb`.
+    required: true
+  repositories:
+    description: >
+      Newline-separated tap repositories as `owner/name`, optionally `owner/name@branch`. All must
+      share one owner, the App must be installed on each with Contents: write.
+    default: tstapler/homebrew-tap
+  commit-message:
+    description: Commit message for each tap commit.
+    default: update ${{ github.event.repository.name }} ${{ github.ref_name }}
+  fallback-token:
+    description: >
+      Optional token used only if the App token cannot be minted (for example a legacy PAT while
+      the App credentials are being rolled out). Leave empty to fail instead.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - id: parse
+      shell: bash
+      env:
+        REPOSITORIES: ${{ inputs.repositories }}
+      run: bash "${{ github.action_path }}/parse-repositories.sh"
+
+    - id: app
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      continue-on-error: true
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ steps.parse.outputs.owner }}
+        repositories: ${{ steps.parse.outputs.names }}
+        permission-contents: write
+
+    - shell: bash
+      env:
+        TOKEN: ${{ steps.app.outputs.token || inputs.fallback-token }}
+        APP_OUTCOME: ${{ steps.app.outcome }}
+        REPOSITORIES: ${{ inputs.repositories }}
+        FILES: ${{ inputs.files }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+      run: bash "${{ github.action_path }}/publish.sh"
