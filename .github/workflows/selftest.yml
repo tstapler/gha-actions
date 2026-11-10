@@ -277,3 +277,27 @@ jobs:
 
       - name: gctrace reached the JSON stream
         run: grep -q 'MB goal' "$RUNNER_TEMP/go-test.json"
+
+  setup-buf-protoc:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./setup-buf
+        id: buf
+      - uses: ./setup-protoc
+        id: protoc
+
+      - name: Installed the pinned versions and they are on PATH
+        env:
+          BUF_OUT: ${{ steps.buf.outputs.version }}
+          PROTOC_OUT: ${{ steps.protoc.outputs.version }}
+        run: |
+          [ "$(buf --version)" = "$BUF_OUT" ] && [ "$BUF_OUT" = "1.50.0" ]
+          [ "$(protoc --version)" = "libprotoc $PROTOC_OUT" ] && [ "$PROTOC_OUT" = "23.4" ]

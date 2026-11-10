@@ -152,6 +152,23 @@ fi
 printf '{"Action":"pass","Package":"p","Elapsed":1.5}\nnot json\n' > "$tmp/mini.json"
 assert_contains "malformed lines are skipped" "$(python3 -I "$root/go-diagnostics-upload/summarize.py" "$tmp/mini.json")" "| p | 1.5 | ok |"
 
+# --- setup-buf / setup-protoc ----------------------------------------------------------------
+url_of() { # ACTION ENVVAR VERSION OS ARCH -> download URL
+  env "$2=$3" DRY_RUN=1 UNAME_S="$4" UNAME_M="$5" bash "$root/$1/setup.sh" 2>&1
+}
+assert_eq "buf linux amd64" "$(url_of setup-buf BUF_VERSION v1.50.0 Linux x86_64)" "https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-Linux-x86_64"
+assert_eq "buf linux arm64 (uname says aarch64)" "$(url_of setup-buf BUF_VERSION 1.50.0 Linux aarch64)" "https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-Linux-aarch64"
+assert_eq "buf mac arm64" "$(url_of setup-buf BUF_VERSION 1.50.0 Darwin arm64)" "https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-Darwin-arm64"
+assert_contains "buf rejects latest" "$(url_of setup-buf BUF_VERSION latest Linux x86_64)" "no 'latest'"
+assert_contains "buf rejects unsupported platform" "$(url_of setup-buf BUF_VERSION 1.50.0 Linux riscv64)" "unsupported platform"
+assert_eq "protoc linux amd64" "$(url_of setup-protoc PROTOC_VERSION 23.4 Linux x86_64)" "https://github.com/protocolbuffers/protobuf/releases/download/v23.4/protoc-23.4-linux-x86_64.zip"
+assert_eq "protoc linux arm64" "$(url_of setup-protoc PROTOC_VERSION v23.4 Linux arm64)" "https://github.com/protocolbuffers/protobuf/releases/download/v23.4/protoc-23.4-linux-aarch_64.zip"
+assert_eq "protoc mac arm64" "$(url_of setup-protoc PROTOC_VERSION 23.4 Darwin arm64)" "https://github.com/protocolbuffers/protobuf/releases/download/v23.4/protoc-23.4-osx-aarch_64.zip"
+assert_contains "protoc rejects latest" "$(url_of setup-protoc PROTOC_VERSION latest Linux x86_64)" "no 'latest'"
+for a in linux-x86_64 linux-aarch_64 osx-x86_64 osx-aarch_64; do
+  assert_contains "protoc checksum recorded for $a" "$(cat "$root/setup-protoc/checksums.txt")" "protoc-23.4-$a.zip"
+done
+
 echo
 echo "$passes passed, $fails failed"
 [ "$fails" -eq 0 ]

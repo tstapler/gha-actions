@@ -1,0 +1,35 @@
+name: setup-protoc
+description: >
+  Installs a pinned `protoc` release from GitHub release assets and adds it to PATH. Downloads are
+  checked against checksums.txt in this action. Pinned installs never call the GitHub API.
+author: tstapler
+branding:
+  icon: download
+  color: blue
+
+inputs:
+  version:
+    description: protoc version to install, with or without a leading `v`, for example 23.4. There is no `latest`.
+    default: '23.4'
+  require-checksum:
+    description: Fail when checksums.txt has no entry for the asset (a version not yet recorded). Set `false` to install unverified.
+    default: 'true'
+
+outputs:
+  version:
+    description: The installed protoc version.
+    value: ${{ steps.setup.outputs.version }}
+  path:
+    description: Directory containing the protoc binary.
+    value: ${{ steps.setup.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PROTOC_VERSION: ${{ inputs.version }}
+        REQUIRE_CHECKSUM: ${{ inputs.require-checksum }}
+      run: bash "$ACTION_PATH/setup.sh"

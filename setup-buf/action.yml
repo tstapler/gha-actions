@@ -1,0 +1,32 @@
+name: setup-buf
+description: >
+  Installs a pinned `buf` release from GitHub release assets, verifies it against the release's
+  sha256.txt and adds it to PATH. Pinned installs never call the GitHub API, so they cannot hit
+  the unauthenticated API rate limit that bufbuild/buf-setup-action can.
+author: tstapler
+branding:
+  icon: download
+  color: blue
+
+inputs:
+  version:
+    description: buf version to install, with or without a leading `v`. There is no `latest`; pin one.
+    default: '1.50.0'
+
+outputs:
+  version:
+    description: The installed buf version.
+    value: ${{ steps.setup.outputs.version }}
+  path:
+    description: Directory containing the buf binary.
+    value: ${{ steps.setup.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        BUF_VERSION: ${{ inputs.version }}
+      run: bash "$ACTION_PATH/setup.sh"
