@@ -1,0 +1,109 @@
+name: bazel-rust-package
+description: >
+  Builds a Bazel rust_binary target, packages the binary (plus README/LICENSE if present) as
+  `<name>-<version>-<triple>.tar.gz` with a `.sha256` file, and uploads both as a workflow artifact.
+  Expects `bazel` on PATH (see setup-bazel).
+author: tstapler
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  target:
+    description: Bazel label of the rust_binary, for example //crates/cli:dunnage.
+    required: true
+  binary-name:
+    description: Name of the executable in the archive (and `bin.install` in the formula).
+    required: true
+  target-triple:
+    description: Rust target triple this build is for, for example aarch64-apple-darwin. Used in the archive name only; the build is native on the runner.
+    required: true
+  version:
+    description: Release version, with or without a leading `v`.
+    required: true
+  configs:
+    description: Whitespace-separated config names; each becomes `--config=NAME` on build, cquery and info.
+    default: ''
+  bazel-args:
+    description: Newline-separated extra arguments for `bazel build` (and cquery/info), for example `--compilation_mode=opt`.
+    default: ''
+  working-directory:
+    description: Directory to run Bazel in (the workspace root, where MODULE.bazel is). source-dir and output-dir are relative to it.
+    default: '.'
+  binary-path:
+    description: Package this file instead of building. For prebuilt binaries and tests.
+    default: ''
+  extra-files:
+    description: Newline-separated extra files to put in the archive, besides README*, LICENSE* and COPYING* found in source-dir.
+    default: ''
+  source-dir:
+    description: Directory searched for README and LICENSE files.
+    default: '.'
+  output-dir:
+    description: Directory the archive and checksum are written to, relative to working-directory. The outputs are absolute paths.
+    default: dist
+  upload:
+    description: Upload the archive and checksum with actions/upload-artifact.
+    default: 'true'
+  artifact-name:
+    description: Artifact name. Defaults to `package-<target-triple>`.
+    default: ''
+  retention-days:
+    description: Artifact retention in days (0 uses the repository default).
+    default: '7'
+
+outputs:
+  archive-path:
+    description: Path of the .tar.gz.
+    value: ${{ steps.package.outputs.archive-path }}
+  archive-name:
+    description: File name of the .tar.gz.
+    value: ${{ steps.package.outputs.archive-name }}
+  sha256:
+    description: sha256 of the archive.
+    value: ${{ steps.package.outputs.sha256 }}
+  sha256-path:
+    description: Path of the .sha256 file.
+    value: ${{ steps.package.outputs.sha256-path }}
+  artifact-name:
+    description: Name of the uploaded artifact (empty when upload is false).
+    value: ${{ steps.name.outputs.artifact }}
+
+runs:
+  using: composite
+  steps:
+    - id: package
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        TARGET: ${{ inputs.target }}
+        BINARY_NAME: ${{ inputs.binary-name }}
+        TARGET_TRIPLE: ${{ inputs.target-triple }}
+        VERSION: ${{ inputs.version }}
+        CONFIGS: ${{ inputs.configs }}
+        BAZEL_ARGS: ${{ inputs.bazel-args }}
+        BINARY_PATH: ${{ inputs.binary-path }}
+        EXTRA_FILES: ${{ inputs.extra-files }}
+        SOURCE_DIR: ${{ inputs.source-dir }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        WORKDIR: ${{ inputs.working-directory }}
+      run: bash "$ACTION_PATH/package.sh"
+
+    - id: name
+      shell: bash
+      env:
+        UPLOAD: ${{ inputs.upload }}
+        GIVEN: ${{ inputs.artifact-name }}
+        TRIPLE: ${{ inputs.target-triple }}
+      run: |
+        if [ "$UPLOAD" = true ]; then echo "artifact=${GIVEN:-package-$TRIPLE}" >> "$GITHUB_OUTPUT"; else echo "artifact=" >> "$GITHUB_OUTPUT"; fi
+
+    - if: inputs.upload == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.name.outputs.artifact }}
+        path: |
+          ${{ steps.package.outputs.archive-path }}
+          ${{ steps.package.outputs.sha256-path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: error
