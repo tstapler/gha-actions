@@ -178,7 +178,8 @@ mkrepo() { # NAME -> bare repo with an initial commit on main under $tmp/remotes
   (cd "$seed" && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git push -q origin HEAD:main)
 }
 publish() { # extra env as KEY=VAL...; uses FILES/REPOSITORIES from caller env
-  env URL_BASE="file://$tmp/remotes" COMMIT_MESSAGE="update x" "$@" bash "$pub/publish.sh" 2>&1
+  # No global git identity or config, like a runner: this is what exposed the rebase-needs-identity bug.
+  env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null URL_BASE="file://$tmp/remotes" COMMIT_MESSAGE="update x" "$@" bash "$pub/publish.sh" 2>&1
 }
 tapfile() { git -C "$tmp/remotes/o/$1.git" show "main:$2" 2>/dev/null; }
 

@@ -60,6 +60,11 @@ publish_repo() { # spec
   git clone -q --depth 1 ${branch:+--branch "$branch"} "$(remote_for "$spec")" "$dir" 2>/dev/null \
     || { echo "publish-homebrew-formula: cannot clone $spec (is the App installed on it?)" >&2; return 1; }
   cd "$dir" || return 1
+  # An identity for every git operation here, not just the commit: `git pull --rebase` re-creates
+  # our commit and fails with "Committer identity unknown" on a runner with no global config.
+  export GIT_AUTHOR_NAME=${GIT_USER_NAME:-github-actions[bot]} GIT_COMMITTER_NAME=${GIT_USER_NAME:-github-actions[bot]}
+  export GIT_AUTHOR_EMAIL=${GIT_USER_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}
+  export GIT_COMMITTER_EMAIL=${GIT_USER_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}
   branch=${branch:-$(git rev-parse --abbrev-ref HEAD)}
   for pair in "${pairs[@]}"; do
     src=${pair%%|*}
@@ -73,9 +78,7 @@ publish_repo() { # spec
     echo "$spec: already up to date"
     return 0
   fi
-  git -c user.name="${GIT_USER_NAME:-github-actions[bot]}" \
-    -c user.email="${GIT_USER_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}" \
-    commit -q -m "$COMMIT_MESSAGE" || return 1
+  git commit -q -m "$COMMIT_MESSAGE" || return 1
   push_with_retry "$branch" || { echo "publish-homebrew-formula: could not push to $spec after $attempts attempts" >&2; return 1; }
   echo "$spec: published"
 }
