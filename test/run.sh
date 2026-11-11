@@ -183,7 +183,7 @@ publish() { # extra env as KEY=VAL...; uses FILES/REPOSITORIES from caller env
 tapfile() { git -C "$tmp/remotes/o/$1.git" show "main:$2" 2>/dev/null; }
 
 mkrepo tap1; mkrepo tap2
-mkdir -p "$tmp/work/Formula" && cd "$tmp/work"
+mkdir -p "$tmp/work/Formula" && cd "$tmp/work" || exit 1
 printf 'class Tool\n  version "1"\nend\n' > Formula/tool.rb
 printf 'cask "tool"\n' > tool-cask.rb
 out=$(publish FILES=$'Formula/tool.rb:Formula/tool.rb\ntool-cask.rb:Casks/tool.rb' REPOSITORIES=$'o/tap1\no/tap2')
@@ -224,7 +224,7 @@ assert_contains "parse rejects mixed owners" "$(pr $'a/x\nb/y')" "share one owne
 assert_contains "parse rejects junk" "$(pr 'not a repo')" "not owner/name"
 o="$tmp/ghout.parse"; REPOSITORIES=$'tstapler/homebrew-tap@main\ntstapler/other' GITHUB_OUTPUT="$o" bash "$pub/parse-repositories.sh"
 assert_eq "parse strips branches and lists names" "$(tr '\n' ' ' < "$o")" "owner=tstapler names<<EOF homebrew-tap other EOF "
-cd "$root"
+cd "$root" || exit 1
 
 echo
 echo "$passes passed, $fails failed"
