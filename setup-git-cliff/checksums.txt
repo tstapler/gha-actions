@@ -1,0 +1,3 @@
+24f397c733add5390fdceee3a2088588ab0d5f944ce00d34cb7029b888cf2db4  git-cliff-2.14.2-x86_64-unknown-linux-gnu.tar.gz
+69e208f6e4baef3a0f9b759d5f44223aa9336b86c691072a3d0c98d35a816e69  git-cliff-2.14.2-aarch64-unknown-linux-gnu.tar.gz
+a0be97e237d440d34c5e508ec21d070b2c85cbb8be48a46a56f9a4e8bd247f05  git-cliff-2.14.2-aarch64-apple-darwin.tar.gz
