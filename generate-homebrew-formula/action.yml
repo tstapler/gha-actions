@@ -1,0 +1,74 @@
+name: generate-homebrew-formula
+description: >
+  Renders a Homebrew formula (.rb) for prebuilt release archives: per-OS/CPU `on_macos`/`on_linux`
+  blocks with url and sha256, `bin.install`, and a `--version` test. Output feeds publish-homebrew-formula.
+author: tstapler
+branding:
+  icon: file-text
+  color: orange
+
+inputs:
+  name:
+    description: Formula name (lowercase), for example dunnage.
+    required: true
+  version:
+    description: Release version, with or without a leading `v`.
+    required: true
+  desc:
+    description: One-line description.
+    required: true
+  homepage:
+    description: Homepage URL.
+    required: true
+  license:
+    description: SPDX license expression, for example `MIT` or `MIT OR Apache-2.0`.
+    required: true
+  archives:
+    description: >
+      Newline-separated `TRIPLE URL SHA256` lines, for example
+      `aarch64-apple-darwin https://github.com/o/r/releases/download/v1/tool-1-aarch64-apple-darwin.tar.gz <sha256>`.
+    default: ''
+  sums-file:
+    description: A `sha256sum`-style file (SHA256SUMS). With url-base, every `<binary-name>-<version>-<triple>.tar.gz` in it becomes an archive.
+    default: ''
+  url-base:
+    description: Directory URL the archives in sums-file are downloaded from.
+    default: ''
+  binary-name:
+    description: Executable installed with `bin.install`. Defaults to the formula name.
+    default: ''
+  class-name:
+    description: Ruby class name. Defaults to the formula name in CamelCase.
+    default: ''
+  test-args:
+    description: Arguments for the formula's `test do` block.
+    default: '--version'
+  output:
+    description: Path to write. Defaults to `<name>.rb`.
+    default: ''
+
+outputs:
+  formula-path:
+    description: Path of the generated formula.
+    value: ${{ steps.generate.outputs.formula-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: generate
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        NAME: ${{ inputs.name }}
+        VERSION: ${{ inputs.version }}
+        DESC: ${{ inputs.desc }}
+        HOMEPAGE: ${{ inputs.homepage }}
+        LICENSE_ID: ${{ inputs.license }}
+        ARCHIVES: ${{ inputs.archives }}
+        SUMS_FILE: ${{ inputs.sums-file }}
+        URL_BASE: ${{ inputs.url-base }}
+        BINARY_NAME: ${{ inputs.binary-name }}
+        CLASS_NAME: ${{ inputs.class-name }}
+        TEST_ARGS: ${{ inputs.test-args }}
+        OUTPUT: ${{ inputs.output }}
+      run: python3 -I "$ACTION_PATH/generate.py"
