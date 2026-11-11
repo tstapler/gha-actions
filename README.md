@@ -11,6 +11,7 @@ Reusable composite actions for CI observability. Pin by commit SHA (or `@v0`).
 | [`go-diagnostics-upload`](go-diagnostics-upload/README.md) | Summarize `go test -json` (slowest packages/tests, per-package GC pressure) and upload it |
 | [`setup-buf`](setup-buf/README.md) | Install a pinned `buf` release, checksum-verified; no GitHub API calls, so no unauthenticated rate limit |
 | [`setup-protoc`](setup-protoc/README.md) | Install a pinned `protoc` release, checksum-verified; same properties |
+| [`publish-homebrew-formula`](publish-homebrew-formula/README.md) | Push formula/cask files to one or more tap repos as a GitHub App (short-lived token, retry on a lost push race) |
 | `runner-monitor` | Thin wrapper over `step-security/workflow-telemetry-action` with safe defaults |
 | `otel-trace` | Thin wrapper over `corentinmusard/otel-cicd-action`; off unless an endpoint is set |
 

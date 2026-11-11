@@ -169,6 +169,64 @@ for a in linux-x86_64 linux-aarch_64 osx-x86_64 osx-aarch_64; do
   assert_contains "protoc checksum recorded for $a" "$(cat "$root/setup-protoc/checksums.txt")" "protoc-23.4-$a.zip"
 done
 
+# --- publish-homebrew-formula ----------------------------------------------------------------
+pub="$root/publish-homebrew-formula"
+mkrepo() { # NAME -> bare repo with an initial commit on main under $tmp/remotes/OWNER/NAME.git
+  local bare="$tmp/remotes/o/$1.git" seed="$tmp/seed-$1"
+  git init -q --bare -b main "$bare"
+  git clone -q "$bare" "$seed" 2>/dev/null
+  (cd "$seed" && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git push -q origin HEAD:main)
+}
+publish() { # extra env as KEY=VAL...; uses FILES/REPOSITORIES from caller env
+  # No global git identity or config, like a runner: this is what exposed the rebase-needs-identity bug.
+  env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null URL_BASE="file://$tmp/remotes" COMMIT_MESSAGE="update x" "$@" bash "$pub/publish.sh" 2>&1
+}
+tapfile() { git -C "$tmp/remotes/o/$1.git" show "main:$2" 2>/dev/null; }
+
+mkrepo tap1; mkrepo tap2
+mkdir -p "$tmp/work/Formula" && cd "$tmp/work" || exit 1
+printf 'class Tool\n  version "1"\nend\n' > Formula/tool.rb
+printf 'cask "tool"\n' > tool-cask.rb
+out=$(publish FILES=$'Formula/tool.rb:Formula/tool.rb\ntool-cask.rb:Casks/tool.rb' REPOSITORIES=$'o/tap1\no/tap2')
+assert_contains "publishes to the first tap" "$out" "o/tap1: published"
+assert_contains "publishes to the second tap" "$out" "o/tap2: published"
+assert_eq "formula landed in tap1" "$(tapfile tap1 Formula/tool.rb | head -2 | tail -1)" '  version "1"'
+assert_eq "cask landed in a subdirectory of tap2" "$(tapfile tap2 Casks/tool.rb)" 'cask "tool"'
+
+out=$(publish FILES=Formula/tool.rb:Formula/tool.rb REPOSITORIES=o/tap1)
+assert_contains "unchanged file makes no commit" "$out" "already up to date"
+assert_eq "tap1 history has just init + one publish" "$(git -C "$tmp/remotes/o/tap1.git" rev-list --count main)" "2"
+
+printf 'class Tool\n  version "2"\nend\n' > Formula/tool.rb
+publish FILES=Formula/tool.rb:Formula/tool.rb REPOSITORIES=o/tap1 >/dev/null
+assert_eq "update replaces the file" "$(tapfile tap1 Formula/tool.rb | sed -n 2p)" '  version "2"'
+
+# a competing publisher pushes between our clone and our push: the retry must rebase and win
+mkrepo racy
+racer="$tmp/racer"; git clone -q "$tmp/remotes/o/racy.git" "$racer" 2>/dev/null
+hook="$tmp/remotes/o/racy.git/hooks/pre-receive"
+printf '#!/bin/sh\nrm -f "%s"\nunset GIT_DIR GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\ncd "%s" && echo other > other.txt && git add other.txt && git -c user.name=o -c user.email=o@o commit -q -m other && git push -q origin HEAD:main --no-verify 2>/dev/null\nexit 1\n' "$hook" "$racer" > "$hook"
+chmod +x "$hook"
+out=$(publish FILES=Formula/tool.rb:Formula/tool.rb REPOSITORIES=o/racy)
+assert_contains "lost race is retried" "$out" "o/racy: published"
+assert_eq "both the racer's file and ours are on main" "$(tapfile racy other.txt)$(tapfile racy Formula/tool.rb | sed -n 2p)" 'other  version "2"'
+
+out=$(publish FILES=missing.rb:Formula/x.rb REPOSITORIES=o/tap1) || true
+assert_contains "missing source file is an error" "$out" "does not exist"
+out=$(publish FILES=Formula/tool.rb:../escape.rb REPOSITORIES=o/tap1) || true
+assert_contains "DEST with .. is rejected" "$out" "without '..'"
+out=$(publish FILES=Formula/tool.rb:Formula/tool.rb REPOSITORIES=o/nonexistent) || true
+assert_contains "uncloneable repo is an error" "$out" "cannot clone o/nonexistent"
+out=$(TOKEN="" env -u TOKEN URL_BASE=https://github.com COMMIT_MESSAGE=x FILES=Formula/tool.rb:Formula/tool.rb REPOSITORIES=o/tap1 bash "$pub/publish.sh" 2>&1) || true
+assert_contains "no token over https fails with guidance" "$out" "no token"
+
+pr() { REPOSITORIES="$1" GITHUB_OUTPUT="$tmp/ghout.$RANDOM" bash "$pub/parse-repositories.sh" 2>&1; }
+assert_contains "parse rejects mixed owners" "$(pr $'a/x\nb/y')" "share one owner"
+assert_contains "parse rejects junk" "$(pr 'not a repo')" "not owner/name"
+o="$tmp/ghout.parse"; REPOSITORIES=$'tstapler/homebrew-tap@main\ntstapler/other' GITHUB_OUTPUT="$o" bash "$pub/parse-repositories.sh"
+assert_eq "parse strips branches and lists names" "$(tr '\n' ' ' < "$o")" "owner=tstapler names<<EOF homebrew-tap other EOF "
+cd "$root" || exit 1
+
 echo
 echo "$passes passed, $fails failed"
 [ "$fails" -eq 0 ]
