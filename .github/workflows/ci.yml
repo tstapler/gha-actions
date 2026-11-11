@@ -28,6 +28,10 @@ jobs:
           gradle-ci-memory/compute.sh jvm-diagnostics-upload/collect.sh
           bazel-profile/setup.sh bazel-profile/summarize.sh
           mem-sampler/bin/mem-sampler test/run.sh test/kotlin-daemon-probe.sh
+          setup-buf/setup.sh setup-protoc/setup.sh
+          publish-homebrew-formula/publish.sh publish-homebrew-formula/parse-repositories.sh
+          setup-bazel/setup.sh setup-git-cliff/setup.sh bazel-rust-package/package.sh
+          setup-bazel/setup.sh setup-git-cliff/setup.sh bazel-rust-package/package.sh
 
       - name: actionlint
         run: |
