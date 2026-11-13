@@ -26,7 +26,10 @@ while IFS= read -r line; do
   [ -n "${line//[[:space:]]/}" ] || continue
   src=${line%%:*}
   dest=${line#*:}
-  [ "$src" != "$line" ] && [ -n "$src" ] && [ -n "$dest" ] || { echo "publish-homebrew-formula: '$line' is not SOURCE:DEST" >&2; exit 1; }
+  if [ "$src" = "$line" ] || [ -z "$src" ] || [ -z "$dest" ]; then
+    echo "publish-homebrew-formula: '$line' is not SOURCE:DEST" >&2
+    exit 1
+  fi
   [ -f "$src" ] || { echo "publish-homebrew-formula: source file '$src' does not exist" >&2; exit 1; }
   case $dest in /* | ../* | *..*) echo "publish-homebrew-formula: DEST '$dest' must be a relative path without '..'" >&2; exit 1 ;; esac
   pairs+=("$(realpath "$src")|$dest")
