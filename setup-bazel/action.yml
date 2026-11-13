@@ -1,0 +1,97 @@
+name: setup-bazel
+description: >
+  Installs a pinned bazelisk release as `bazel` (checksum-verified, no GitHub API calls), selects the
+  Bazel version from `.bazelversion`, and optionally caches the Bazel disk and repository caches or
+  points Bazel at a remote cache such as tstapler/bazel-cache-proxy.
+author: tstapler
+branding:
+  icon: download
+  color: green
+
+inputs:
+  bazelisk-version:
+    description: bazelisk release to install, for example 1.30.0. There is no `latest`; its checksum must be in setup-bazel/checksums.txt.
+    default: '1.30.0'
+  working-directory:
+    description: Directory holding `.bazelversion`.
+    default: '.'
+  bazel-version:
+    description: Bazel version to use. Empty reads `.bazelversion` in working-directory. Exported as USE_BAZEL_VERSION.
+    default: ''
+  disk-cache:
+    description: Cache Bazel's disk cache (--disk_cache) with actions/cache.
+    default: 'false'
+  repository-cache:
+    description: Cache Bazel's repository cache (downloaded external archives) with actions/cache.
+    default: 'true'
+  cache-key:
+    description: Name for this job's caches; use a distinct value per job that builds different targets.
+    default: bazel
+  cache-save:
+    description: Save the caches when the job ends. Set `false` on pull requests to restore only.
+    default: 'true'
+  remote-cache:
+    description: Remote cache endpoint passed as --remote_cache, for example http://127.0.0.1:9090/cache for tstapler/bazel-cache-proxy. Start the proxy before the build, not necessarily before this step.
+    default: ''
+  remote-upload:
+    description: Upload local results to the remote cache. `false` makes it read-only.
+    default: 'true'
+
+outputs:
+  version:
+    description: The installed bazelisk version.
+    value: ${{ steps.setup.outputs.version }}
+  path:
+    description: Directory containing the `bazel` (bazelisk) binary.
+    value: ${{ steps.setup.outputs.path }}
+  bazel-version:
+    description: The Bazel version exported as USE_BAZEL_VERSION (empty when bazelisk picks its default).
+    value: ${{ steps.setup.outputs.bazel-version }}
+  disk-cache-dir:
+    description: Directory used for --disk_cache.
+    value: ${{ steps.setup.outputs.disk-cache-dir }}
+  repository-cache-dir:
+    description: Directory used for --repository_cache.
+    value: ${{ steps.setup.outputs.repository-cache-dir }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        BAZELISK_VERSION: ${{ inputs.bazelisk-version }}
+        WORKDIR: ${{ inputs.working-directory }}
+        BAZEL_VERSION: ${{ inputs.bazel-version }}
+        DISK_CACHE: ${{ inputs.disk-cache }}
+        REPO_CACHE: ${{ inputs.repository-cache }}
+        REMOTE_CACHE: ${{ inputs.remote-cache }}
+        REMOTE_UPLOAD: ${{ inputs.remote-upload }}
+      run: bash "$ACTION_PATH/setup.sh"
+
+    - if: inputs.disk-cache == 'true' && inputs.cache-save == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.setup.outputs.disk-cache-dir }}
+        key: ${{ inputs.cache-key }}-disk-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: ${{ inputs.cache-key }}-disk-${{ runner.os }}-${{ runner.arch }}-
+    - if: inputs.disk-cache == 'true' && inputs.cache-save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.setup.outputs.disk-cache-dir }}
+        key: ${{ inputs.cache-key }}-disk-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+        restore-keys: ${{ inputs.cache-key }}-disk-${{ runner.os }}-${{ runner.arch }}-
+
+    - if: inputs.repository-cache == 'true' && inputs.cache-save == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.setup.outputs.repository-cache-dir }}
+        key: ${{ inputs.cache-key }}-repo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/MODULE.bazel', inputs.working-directory), format('{0}/MODULE.bazel.lock', inputs.working-directory)) }}
+        restore-keys: ${{ inputs.cache-key }}-repo-${{ runner.os }}-${{ runner.arch }}-
+    - if: inputs.repository-cache == 'true' && inputs.cache-save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.setup.outputs.repository-cache-dir }}
+        key: ${{ inputs.cache-key }}-repo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/MODULE.bazel', inputs.working-directory), format('{0}/MODULE.bazel.lock', inputs.working-directory)) }}
+        restore-keys: ${{ inputs.cache-key }}-repo-${{ runner.os }}-${{ runner.arch }}-

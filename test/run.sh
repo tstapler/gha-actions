@@ -169,6 +169,150 @@ for a in linux-x86_64 linux-aarch_64 osx-x86_64 osx-aarch_64; do
   assert_contains "protoc checksum recorded for $a" "$(cat "$root/setup-protoc/checksums.txt")" "protoc-23.4-$a.zip"
 done
 
+# --- setup-bazel / setup-git-cliff / checksum verification ----------------------------------------
+assert_eq "bazelisk linux amd64" "$(url_of setup-bazel BAZELISK_VERSION 1.30.0 Linux x86_64)" "https://github.com/bazelbuild/bazelisk/releases/download/v1.30.0/bazelisk-linux-amd64"
+assert_eq "bazelisk linux arm64" "$(url_of setup-bazel BAZELISK_VERSION v1.30.0 Linux aarch64)" "https://github.com/bazelbuild/bazelisk/releases/download/v1.30.0/bazelisk-linux-arm64"
+assert_eq "bazelisk mac arm64" "$(url_of setup-bazel BAZELISK_VERSION 1.30.0 Darwin arm64)" "https://github.com/bazelbuild/bazelisk/releases/download/v1.30.0/bazelisk-darwin-arm64"
+assert_contains "bazelisk rejects latest" "$(url_of setup-bazel BAZELISK_VERSION latest Linux x86_64)" "no 'latest'"
+assert_contains "bazelisk rejects unsupported platform" "$(url_of setup-bazel BAZELISK_VERSION 1.30.0 Linux riscv64)" "unsupported platform"
+for a in linux-amd64 linux-arm64 darwin-arm64; do
+  assert_contains "bazelisk checksum recorded for $a" "$(cat "$root/setup-bazel/checksums.txt")" "bazelisk-$a"
+done
+assert_eq "git-cliff linux amd64" "$(url_of setup-git-cliff GIT_CLIFF_VERSION 2.14.2 Linux x86_64)" "https://github.com/orhun/git-cliff/releases/download/v2.14.2/git-cliff-2.14.2-x86_64-unknown-linux-gnu.tar.gz"
+assert_eq "git-cliff mac arm64" "$(url_of setup-git-cliff GIT_CLIFF_VERSION v2.14.2 Darwin arm64)" "https://github.com/orhun/git-cliff/releases/download/v2.14.2/git-cliff-2.14.2-aarch64-apple-darwin.tar.gz"
+assert_contains "git-cliff rejects latest" "$(url_of setup-git-cliff GIT_CLIFF_VERSION latest Linux x86_64)" "no 'latest'"
+for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin; do
+  assert_contains "git-cliff checksum recorded for $t" "$(cat "$root/setup-git-cliff/checksums.txt")" "git-cliff-2.14.2-$t.tar.gz"
+done
+
+# A fake release served over file://: the install verifies, then installs; a wrong hash must fail and install nothing.
+rel="$tmp/release"; mkdir -p "$rel"
+printf '#!/bin/sh\necho fake-bazelisk\n' > "$rel/bazelisk-linux-amd64"
+good=$(sha256sum "$rel/bazelisk-linux-amd64" | cut -d' ' -f1)
+printf '%s  bazelisk-linux-amd64\n' "$good" > "$tmp/sums-good.txt"
+printf '%s  bazelisk-linux-amd64\n' "$(printf 0%.0s {1..64})" > "$tmp/sums-bad.txt"
+: > "$tmp/sums-empty.txt"
+bz() { # SUMS_FILE [env...] -> output of setup-bazel against the fake release
+  local sums=$1; shift
+  env UNAME_S=Linux UNAME_M=x86_64 BAZELISK_VERSION=1.30.0 DOWNLOAD_BASE="file://$rel" CHECKSUMS_FILE="$sums" \
+    RUNNER_TOOL_CACHE="$tmp/toolcache.$RANDOM" HOME="$tmp/home" GITHUB_OUTPUT="$tmp/bz.out" GITHUB_ENV="$tmp/bz.vars" \
+    GITHUB_PATH="$tmp/bz.path" BAZELRC="$tmp/bz.bazelrc" "$@" bash "$root/setup-bazel/setup.sh" 2>&1
+}
+mkdir -p "$tmp/proj"; printf '# pinned\n7.4.1\n' > "$tmp/proj/.bazelversion"
+out=$(bz "$tmp/sums-bad.txt") && rc=0 || rc=$?
+assert_eq "bazelisk: a bad checksum fails" "$rc" "1"
+assert_contains "bazelisk: the bad checksum message names the asset" "$out" "checksum mismatch for bazelisk-linux-amd64"
+out=$(bz "$tmp/sums-empty.txt") && rc=0 || rc=$?
+assert_eq "bazelisk: an unrecorded asset fails" "$rc" "1"
+assert_contains "bazelisk: unrecorded asset message" "$out" "no recorded checksum"
+assert_eq "bazelisk: nothing written to PATH after a failure" "$(cat "$tmp/bz.path" 2>/dev/null)" ""
+out=$(bz "$tmp/sums-good.txt" WORKDIR="$tmp/proj" REMOTE_CACHE=http://127.0.0.1:9090/cache REMOTE_UPLOAD=false DISK_CACHE=true REPO_CACHE=true CACHE_ROOT="$tmp/cr") && rc=0 || rc=$?
+assert_eq "bazelisk: a good checksum installs" "$rc" "0"
+assert_contains "bazelisk: reports the bazel version" "$out" "Bazel 7.4.1"
+assert_eq "bazelisk: USE_BAZEL_VERSION read from .bazelversion (comments skipped)" "$(cat "$tmp/bz.vars")" "USE_BAZEL_VERSION=7.4.1"
+assert_eq "bazelisk: installed as bazel and runnable" "$("$(cat "$tmp/bz.path")/bazel")" "fake-bazelisk"
+assert_eq "bazelisk: bazelrc has cache and remote lines" "$(tr '\n' '|' < "$tmp/bz.bazelrc")" "build --disk_cache=$tmp/cr/bazel-disk-cache|common --repository_cache=$tmp/cr/bazel-repository-cache|build --remote_cache=http://127.0.0.1:9090/cache|build --remote_upload_local_results=false|"
+rm -f "$tmp/bz.vars"
+bz "$tmp/sums-good.txt" BAZEL_VERSION=8.0.0 WORKDIR="$tmp/proj" >/dev/null
+assert_eq "bazelisk: bazel-version input wins over .bazelversion" "$(cat "$tmp/bz.vars")" "USE_BAZEL_VERSION=8.0.0"
+rm -f "$tmp/bz.vars"
+bz "$tmp/sums-good.txt" WORKDIR="$tmp/nowhere" >/dev/null
+assert_eq "bazelisk: no .bazelversion sets nothing" "$(cat "$tmp/bz.vars" 2>/dev/null)" ""
+out=$(bz "$tmp/sums-good.txt" BAZEL_VERSION='1;rm -rf /') && rc=0 || rc=$?
+assert_eq "bazelisk: an odd Bazel version is refused" "$rc" "1"
+
+mkdir -p "$tmp/cliff-src/git-cliff-2.14.2" "$tmp/cliff-rel"
+printf '#!/bin/sh\necho git-cliff 2.14.2\n' > "$tmp/cliff-src/git-cliff-2.14.2/git-cliff"; chmod +x "$tmp/cliff-src/git-cliff-2.14.2/git-cliff"
+tar -czf "$tmp/cliff-rel/git-cliff-2.14.2-x86_64-unknown-linux-gnu.tar.gz" -C "$tmp/cliff-src" git-cliff-2.14.2
+printf '%s  git-cliff-2.14.2-x86_64-unknown-linux-gnu.tar.gz\n' "$(sha256sum "$tmp/cliff-rel/git-cliff-2.14.2-x86_64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)" > "$tmp/cliff-good.txt"
+printf '%s  git-cliff-2.14.2-x86_64-unknown-linux-gnu.tar.gz\n' "$(printf 1%.0s {1..64})" > "$tmp/cliff-bad.txt"
+cl() { env UNAME_S=Linux UNAME_M=x86_64 GIT_CLIFF_VERSION=2.14.2 DOWNLOAD_BASE="file://$tmp/cliff-rel" CHECKSUMS_FILE="$1" RUNNER_TOOL_CACHE="$tmp/cliff-tc.$RANDOM" GITHUB_OUTPUT="$tmp/cl.out" GITHUB_PATH="$tmp/cl.path" bash "$root/setup-git-cliff/setup.sh" 2>&1; }
+out=$(cl "$tmp/cliff-bad.txt") && rc=0 || rc=$?
+assert_eq "git-cliff: a bad checksum fails" "$rc" "1"
+assert_contains "git-cliff: mismatch message" "$out" "checksum mismatch"
+out=$(cl "$tmp/cliff-good.txt") && rc=0 || rc=$?
+assert_eq "git-cliff: a good checksum installs" "$rc" "0"
+assert_contains "git-cliff: runs after install" "$out" "git-cliff 2.14.2"
+
+# --- bazel-rust-package ----------------------------------------------------------------------
+pk="$root/bazel-rust-package/package.sh"
+mkdir -p "$tmp/fakeb" "$tmp/exec/bazel-out/bin/crates/cli" "$tmp/ws-pkg"
+cat > "$tmp/fakeb/bazel" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$tmp/bazel.log"
+case "\$1" in
+  cquery) echo "bazel-out/bin/crates/cli/dunnage" ;;
+  info) echo "$tmp/exec" ;;
+esac
+EOF
+chmod +x "$tmp/fakeb/bazel"
+printf 'binary-bytes' > "$tmp/exec/bazel-out/bin/crates/cli/dunnage"
+printf '# readme\n' > "$tmp/ws-pkg/README.md"; printf 'MIT\n' > "$tmp/ws-pkg/LICENSE-MIT"; printf 'note\n' > "$tmp/ws-pkg/NOTES.txt"
+pkg() { env BAZEL="$tmp/fakeb/bazel" TARGET=//crates/cli:dunnage BINARY_NAME=dunnage TARGET_TRIPLE=aarch64-apple-darwin VERSION=v1.2.3 \
+  SOURCE_DIR="$tmp/ws-pkg" OUTPUT_DIR="$tmp/dist" GITHUB_OUTPUT="$tmp/pkg.out" "$@" bash "$pk" 2>&1; }
+: > "$tmp/bazel.log"; : > "$tmp/pkg.out"
+out=$(pkg CONFIGS="release  opt" BAZEL_ARGS=$'--stamp\n--compilation_mode=opt' EXTRA_FILES="$tmp/ws-pkg/NOTES.txt") && rc=0 || rc=$?
+assert_eq "package: succeeds" "$rc" "0"
+arch="$tmp/dist/dunnage-1.2.3-aarch64-apple-darwin.tar.gz"
+assert_eq "package: archive named <name>-<version>-<triple>.tar.gz (v stripped)" "$([ -f "$arch" ] && echo yes)" "yes"
+assert_eq "package: build, cquery and info get the same flags" "$(tr '\n' '|' < "$tmp/bazel.log")" "build --config=release --config=opt --stamp --compilation_mode=opt -- //crates/cli:dunnage|cquery --config=release --config=opt --stamp --compilation_mode=opt --output=files -- //crates/cli:dunnage|info --config=release --config=opt --stamp --compilation_mode=opt execution_root|"
+listing=$(tar -tzf "$arch" | LC_ALL=C sort | tr '\n' ' ')
+assert_eq "package: one top-level dir with binary, README, LICENSE and extras" "$listing" "dunnage-1.2.3-aarch64-apple-darwin/ dunnage-1.2.3-aarch64-apple-darwin/LICENSE-MIT dunnage-1.2.3-aarch64-apple-darwin/NOTES.txt dunnage-1.2.3-aarch64-apple-darwin/README.md dunnage-1.2.3-aarch64-apple-darwin/dunnage "
+x="$tmp/extract"; mkdir -p "$x"; tar -xzf "$arch" -C "$x"
+xbin="$x/dunnage-1.2.3-aarch64-apple-darwin/dunnage"
+assert_eq "package: binary content and mode" "$(cat "$xbin")$([ -x "$xbin" ] && echo ' +x')" "binary-bytes +x"
+assert_eq "package: .sha256 verifies with sha256sum -c" "$(cd "$tmp/dist" && sha256sum -c dunnage-1.2.3-aarch64-apple-darwin.tar.gz.sha256 2>&1)" "dunnage-1.2.3-aarch64-apple-darwin.tar.gz: OK"
+assert_eq "package: sha256 output matches the file" "$(sed -n 's/^sha256=//p' "$tmp/pkg.out")" "$(sha256sum "$arch" | cut -d' ' -f1)"
+assert_contains "package: archive-path output" "$(cat "$tmp/pkg.out")" "archive-path=$tmp/dist/dunnage-1.2.3-aarch64-apple-darwin.tar.gz"
+out=$(pkg VERSION=latest) && rc=0 || rc=$?
+assert_eq "package: non-semver version fails" "$rc" "1"
+out=$(pkg TARGET='crates/cli:dunnage') && rc=0 || rc=$?
+assert_contains "package: bad label fails" "$out" "not a Bazel label"
+out=$(pkg TARGET_TRIPLE='x86 64') && rc=0 || rc=$?
+assert_contains "package: bad triple fails" "$out" "not a target triple"
+out=$(pkg BINARY_NAME='../evil') && rc=0 || rc=$?
+assert_contains "package: bad binary name fails" "$out" "unsupported characters"
+out=$(pkg BINARY_PATH="$tmp/nope") && rc=0 || rc=$?
+assert_contains "package: missing binary fails" "$out" "does not exist"
+: > "$tmp/bazel.log"
+out=$(pkg BINARY_PATH="$tmp/exec/bazel-out/bin/crates/cli/dunnage" VERSION=2.0.0-rc.1) && rc=0 || rc=$?
+assert_eq "package: binary-path skips bazel entirely" "$(cat "$tmp/bazel.log")" ""
+assert_eq "package: prerelease version is accepted" "$([ -f "$tmp/dist/dunnage-2.0.0-rc.1-aarch64-apple-darwin.tar.gz" ] && echo yes)" "yes"
+
+# --- generate-homebrew-formula ---------------------------------------------------------------
+gen="$root/generate-homebrew-formula/generate.py"
+sums_url=https://github.com/tstapler/dunnage/releases/download/v0.1.0
+gen_env=(NAME=dunnage VERSION=v0.1.0 DESC="Find and clean up disk space safely" HOMEPAGE=https://github.com/tstapler/dunnage LICENSE_ID="MIT OR Apache-2.0")
+archives_lines="aarch64-apple-darwin $sums_url/dunnage-0.1.0-aarch64-apple-darwin.tar.gz 1111111111111111111111111111111111111111111111111111111111111111
+x86_64-unknown-linux-gnu $sums_url/dunnage-0.1.0-x86_64-unknown-linux-gnu.tar.gz 2222222222222222222222222222222222222222222222222222222222222222
+aarch64-unknown-linux-gnu $sums_url/dunnage-0.1.0-aarch64-unknown-linux-gnu.tar.gz 3333333333333333333333333333333333333333333333333333333333333333"
+env "${gen_env[@]}" OUTPUT="$tmp/f1.rb" ARCHIVES="$archives_lines" python3 -I "$gen" >/dev/null
+if diff -u "$root/test/golden/dunnage.rb" "$tmp/f1.rb" >"$tmp/f1.diff"; then ok "formula: matches the golden file"; else fail "formula: matches the golden file" "$(head -20 "$tmp/f1.diff")"; fi
+printf '%s  dunnage-0.1.0-aarch64-apple-darwin.tar.gz\n%s  dunnage-0.1.0-x86_64-unknown-linux-gnu.tar.gz\n%s  dunnage-0.1.0-aarch64-unknown-linux-gnu.tar.gz\n%s  unrelated-9.9.9-x86_64-unknown-linux-gnu.tar.gz\n' \
+  "$(printf 1%.0s {1..64})" "$(printf 2%.0s {1..64})" "$(printf 3%.0s {1..64})" "$(printf 4%.0s {1..64})" > "$tmp/SHA256SUMS"
+env "${gen_env[@]}" OUTPUT="$tmp/f2.rb" SUMS_FILE="$tmp/SHA256SUMS" URL_BASE="$sums_url/" python3 -I "$gen" >/dev/null
+if diff -q "$root/test/golden/dunnage.rb" "$tmp/f2.rb" >/dev/null; then ok "formula: SHA256SUMS + url-base gives the same formula"; else fail "formula: SHA256SUMS + url-base gives the same formula"; fi
+if command -v ruby >/dev/null 2>&1; then
+  if ruby -c "$root/test/golden/dunnage.rb" >/dev/null 2>&1; then ok "formula: golden file is valid Ruby"; else fail "formula: golden file is valid Ruby"; fi
+fi
+assert_contains "formula: macOS arm-only gets depends_on arch" "$(cat "$tmp/f1.rb")" "depends_on arch: :arm64"
+assert_contains "formula: install block" "$(cat "$tmp/f1.rb")" 'bin.install "dunnage"'
+assert_contains "formula: test runs --version" "$(cat "$tmp/f1.rb")" 'shell_output("#{bin}/dunnage --version")'
+gen_err() { env "${gen_env[@]}" OUTPUT="$tmp/f3.rb" "$@" python3 -I "$gen" 2>&1; }
+assert_contains "formula: unsupported triple fails" "$(gen_err ARCHIVES="riscv64-unknown-linux-gnu $sums_url/x.tar.gz $(printf 1%.0s {1..64})")" "unsupported target triple"
+assert_contains "formula: http URL fails" "$(gen_err ARCHIVES="aarch64-apple-darwin http://x/y.tar.gz $(printf 1%.0s {1..64})")" "must be https://"
+assert_contains "formula: short sha fails" "$(gen_err ARCHIVES="aarch64-apple-darwin $sums_url/y.tar.gz abc")" "64 lowercase hex"
+assert_contains "formula: no archives fails" "$(gen_err ARCHIVES="")" "no archives"
+assert_contains "formula: bad name fails" "$(gen_err NAME=Bad_Name ARCHIVES="$archives_lines")" "must be lowercase"
+env "${gen_env[@]}" NAME=my-cool_tool VERSION=1.0.0-rc.1 DESC='say "hi" #{x}' LICENSE_ID=MIT OUTPUT="$tmp/f4.rb" ARCHIVES="x86_64-unknown-linux-gnu $sums_url/my-cool_tool-1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz $(printf a%.0s {1..64})" python3 -I "$gen" >/dev/null
+assert_contains "formula: class name is CamelCase of the name" "$(cat "$tmp/f4.rb")" "class MyCoolTool < Formula"
+assert_contains "formula: strings are escaped for Ruby" "$(cat "$tmp/f4.rb")" 'desc "say \"hi\" \#{x}"'
+assert_contains "formula: prerelease keeps an explicit version" "$(cat "$tmp/f4.rb")" 'version "1.0.0-rc.1"'
+assert_contains "formula: linux intel-only gets depends_on arch" "$(cat "$tmp/f4.rb")" "depends_on arch: :x86_64"
+if command -v ruby >/dev/null 2>&1; then
+  if ruby -c "$tmp/f4.rb" >/dev/null 2>&1; then ok "formula: escaped formula is valid Ruby"; else fail "formula: escaped formula is valid Ruby"; fi
+fi
+
 # --- publish-homebrew-formula ----------------------------------------------------------------
 pub="$root/publish-homebrew-formula"
 mkrepo() { # NAME -> bare repo with an initial commit on main under $tmp/remotes/OWNER/NAME.git

@@ -1,0 +1,31 @@
+name: setup-git-cliff
+description: >
+  Installs a pinned `git-cliff` release from GitHub release assets and adds it to PATH. Downloads are
+  checked against checksums.txt in this action. Pinned installs never call the GitHub API.
+author: tstapler
+branding:
+  icon: download
+  color: blue
+
+inputs:
+  version:
+    description: git-cliff version to install, with or without a leading `v`, for example 2.14.2. There is no `latest`.
+    default: '2.14.2'
+
+outputs:
+  version:
+    description: The installed git-cliff version.
+    value: ${{ steps.setup.outputs.version }}
+  path:
+    description: Directory containing the git-cliff binary.
+    value: ${{ steps.setup.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        GIT_CLIFF_VERSION: ${{ inputs.version }}
+      run: bash "$ACTION_PATH/setup.sh"
