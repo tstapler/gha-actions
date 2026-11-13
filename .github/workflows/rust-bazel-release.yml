@@ -197,7 +197,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: tstapler/gha-actions/setup-bazel@cf2839eb37c521e01e0f9b82925a89ed525c0fc3 # feat/rust-bazel-publish
+      - uses: tstapler/gha-actions/setup-bazel@2262176adc8ce60f13acdd08dfa6f7d9ddb61b1a # main
         with:
           disk-cache: 'true'
           working-directory: ${{ inputs.working-directory || '.' }}
@@ -205,7 +205,7 @@ jobs:
           cache-save: ${{ github.event_name != 'pull_request' }}
           remote-cache: ${{ inputs.remote-cache }}
 
-      - uses: tstapler/gha-actions/bazel-rust-package@cf2839eb37c521e01e0f9b82925a89ed525c0fc3 # feat/rust-bazel-publish
+      - uses: tstapler/gha-actions/bazel-rust-package@2262176adc8ce60f13acdd08dfa6f7d9ddb61b1a # main
         with:
           working-directory: ${{ inputs.working-directory || '.' }}
           target: ${{ inputs.bazel-target }}
@@ -233,7 +233,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - uses: tstapler/gha-actions/setup-git-cliff@cf2839eb37c521e01e0f9b82925a89ed525c0fc3 # feat/rust-bazel-publish
+      - uses: tstapler/gha-actions/setup-git-cliff@2262176adc8ce60f13acdd08dfa6f7d9ddb61b1a # main
 
       - name: SHA256SUMS and changelog
         shell: bash
@@ -260,7 +260,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - id: formula
-        uses: tstapler/gha-actions/generate-homebrew-formula@cf2839eb37c521e01e0f9b82925a89ed525c0fc3 # feat/rust-bazel-publish
+        uses: tstapler/gha-actions/generate-homebrew-formula@2262176adc8ce60f13acdd08dfa6f7d9ddb61b1a # main
         with:
           name: ${{ inputs.package-name }}
           binary-name: ${{ needs.prepare.outputs.binary }}
@@ -347,7 +347,7 @@ jobs:
           name: release-assets
           path: assets
 
-      - uses: tstapler/gha-actions/publish-homebrew-formula@cf2839eb37c521e01e0f9b82925a89ed525c0fc3 # feat/rust-bazel-publish
+      - uses: tstapler/gha-actions/publish-homebrew-formula@2262176adc8ce60f13acdd08dfa6f7d9ddb61b1a # main
         with:
           client-id: ${{ inputs.homebrew-app-client-id }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
